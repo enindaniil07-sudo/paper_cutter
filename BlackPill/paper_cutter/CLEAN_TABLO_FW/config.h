@@ -3,73 +3,60 @@
 #include <Arduino.h>
 
 // CLEAN_TABLO — D:\paper_cutter\DWIN\CLEAN_TABLO
-// Encoder Autonics E40S6-1000-3-T-24 (datasheet: 1000 P/R, phases A/B/Z), wheel Ø 8 cm
+// Encoder Autonics E40S6-1000-3-T-24 + wheel Ø 8 cm
+// Path: TIM2 hardware encoder (32-bit CNT), MCU polls CNT + UIF.
 
 #ifndef USE_USART1
 #define USE_USART1 0
 #endif
 
-// --- Mechanics (datasheet + wheel) ---
-// Resolution: 1000 pulses/revolution on channel A (rising edges).
-// C = π × 0.08 m ≈ 0.251327412 m/rev
-// Distance [m] = N × C / PPR
-// Speed   [m/s] = ΔN × C / (PPR × Δt)
-// RPM           = (ΔN / PPR) × (60 / Δt)
+// --- Mechanics ---
+// Datasheet: 1000 P/R on channel A.
+// TIM2 Encoder mode 2 counts both edges of A → 2000 TIM counts / revolution.
 static constexpr uint16_t ENC_PPR = 1000;
+static constexpr uint32_t ENC_COUNTS_PER_REV = 2000u;
 static constexpr float WHEEL_D_M = 0.08f;
 static constexpr float CIRC_M = 3.14159265f * WHEEL_D_M;
-// Fixed-point: nanometers per A-pulse (round(π × 0.08 × 1e9 / 1000))
+// nm per TIM count: π × 0.08 × 1e9 / 2000
+static constexpr uint32_t NM_PER_COUNT = 125664UL;
+// Legacy alias (1 A-rising ≈ 2 TIM counts)
 static constexpr uint32_t NM_PER_PULSE = 251327UL;
 
-// Макс. ЗАДАНО: 5 цифр ArtText/VarInput (N_Int=5) → 0…99999
 static constexpr uint32_t MAX_METERS = 99999u;
-static constexpr uint16_t MAX_SPEED_CMS = 9999;  // VP ×0.01 m/s
+static constexpr uint16_t MAX_SPEED_CMS = 9999;
 static constexpr uint16_t MAX_RPM = 9999;
 
-// Скорость — чаще; ОСТАЛОСЬ/прогресс — чуть реже (UART).
 static constexpr uint16_t SPEED_PERIOD_MS = 40;
 static constexpr uint16_t TRAVEL_PERIOD_MS = 50;
 static constexpr uint16_t BUTTON_POLL_MS = 40;
 static constexpr uint16_t BUTTON_DEBOUNCE_MS = 120;
 static constexpr uint16_t TARGET_POLL_MS = 200;
-// Нет импульсов дольше этого → скорость/RPM в 0.
 static constexpr uint16_t SPEED_IDLE_ZERO_MS = 150;
-// TargetGate Resetting: пока панель не подтвердит ЗАДАНО=0 (макс. окно).
 static constexpr uint16_t RESET_TARGET_LOCK_MS = 5000;
-// Optical encoder: only reject impossible edge rates (noise), not mechanical bounce.
-// 25 µs → max ~40 kHz ≈ 2400 RPM @ 1000 P/R (well above cutter speeds).
-static constexpr uint32_t ENC_MIN_EDGE_US = 25;
-// EMA weight for speed/RPM: out = (inst + (N-1)*prev) / N  (N=4 → α=0.25)
 static constexpr uint8_t SPEED_EMA_N = 4;
-// Сколько подряд «обратных» rising A нужно, прежде чем показать ошибку.
-// 1 = сразу; 12 ≈ 4°; 40 ≈ 14° вала @ 1000 P/R.
-static constexpr uint8_t ENC_REV_CONFIRM = 40;
-// Если между обратными фронтами больше этого — streak сбрасывается (шум).
-static constexpr uint32_t ENC_REV_STREAK_GAP_US = 80000;  // 80 ms
 
-// On A rising: B is always sampled for reverse detection.
-// ENC_USE_DIR=1 additionally ignores reverse pulses for distance (same as reverse error path).
-#ifndef ENC_USE_DIR
-#define ENC_USE_DIR 0
-#endif
-// ENC_FORWARD_B_LEVEL defined below with PAGE_*
+// Reverse: TIM counts (mode 2). 80 counts ≈ 40 old A-rising ≈ 14° shaft.
+static constexpr uint8_t ENC_REV_CONFIRM = 80;
+static constexpr uint32_t ENC_REV_STREAK_GAP_US = 80000;
 
-static constexpr int PIN_ENC_A = PB0;  // 3.3 V max after level-shift
-static constexpr int PIN_ENC_B = PB1;
+// TIM2_CH1 / TIM2_CH2 — MUST rewire encoder from PB0/PB1 → PA0/PA1.
+// PA2/PA3 busy (USART2 ↔ DWIN).
+static constexpr int PIN_ENC_A = PA0;
+static constexpr int PIN_ENC_B = PA1;
 static constexpr int PIN_LED = PC13;
 
-// --- VP (must match CLEAN_TABLO) ---
-static constexpr uint16_t VP_TARGET = 0x6000;   // long: ЗАДАНО, целые м
-static constexpr uint16_t VP_TRAVEL = 0x6010;   // long: ОСТАЛОСЬ, целые м (как ЗАДАНО)
+// --- VP ---
+static constexpr uint16_t VP_TARGET = 0x6000;
+static constexpr uint16_t VP_TRAVEL = 0x6010;
 static constexpr uint16_t VP_SPEED = 0x6020;
 static constexpr uint16_t VP_RPM = 0x6024;
-static constexpr uint16_t VP_PROGRESS = 0x6030; // 0..100 %
+static constexpr uint16_t VP_PROGRESS = 0x6030;
 
 static constexpr uint16_t VP_START = 0x6050;
 static constexpr uint16_t VP_STOP = 0x6051;
 static constexpr uint16_t VP_RESET = 0x6052;
 static constexpr uint16_t VP_KB_OPEN = 0x6053;
-static constexpr uint16_t VP_ERR_ACK = 0x6054;  // «ИСПРАВИТЬ» на стр. ошибки
+static constexpr uint16_t VP_ERR_ACK = 0x6054;
 
 static constexpr uint16_t VP_KB_BUF = 0x6080;
 static constexpr uint16_t VP_KB_1 = 0x60A1;
@@ -88,8 +75,21 @@ static constexpr uint16_t VP_KB_CANCEL = 0x60AD;
 
 static constexpr uint16_t PAGE_MAIN = 0;
 static constexpr uint16_t PAGE_KEYPAD = 10;
-static constexpr uint16_t PAGE_ERROR = 11;  // реверс энкодера
+static constexpr uint16_t PAGE_ERR_REVERSE = 11;
+static constexpr uint16_t PAGE_ERR_NO_ENC = 12;
+static constexpr uint16_t PAGE_ERR_NO_TARGET = 13;
+static constexpr uint16_t PAGE_ERR_SPEED_JUMP = 14;
+static constexpr uint16_t PAGE_ERR_CHANNEL = 15;
+// Legacy alias
+static constexpr uint16_t PAGE_ERROR = PAGE_ERR_REVERSE;
 
-// На rising A: B == ENC_FORWARD_B_LEVEL → вперёд; иначе → ошибка реверса.
-// Если сообщение появляется при «правильном» направлении — инвертируй уровень.
-static constexpr int ENC_FORWARD_B_LEVEL = LOW;
+// Run без импульсов TIM → «нет сигнала»
+static constexpr uint32_t ENC_NO_SIGNAL_MS = 4000u;
+// Один канал активен, второй молчит
+static constexpr uint32_t ENC_CH_DEAD_MS = 500u;
+static constexpr uint8_t ENC_CH_MIN_EDGES = 8;
+// Скачок: instant > max(EMA×ratio, EMA+abs) при EMA ≥ floor
+static constexpr uint8_t SPEED_JUMP_RATIO = 4;
+static constexpr uint16_t SPEED_JUMP_ABS_CMS = 150;   // +1.5 м/с
+static constexpr uint16_t SPEED_JUMP_MIN_EMA_CMS = 30; // EMA ≥ 0.30 м/с
+

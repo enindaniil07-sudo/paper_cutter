@@ -3,7 +3,16 @@
 #include <Arduino.h>
 #include "config.h"
 
-enum class FsmState : uint8_t { Idle = 0, Keypad, Run, Stopped, ReverseError };
+enum class FsmState : uint8_t { Idle = 0, Keypad, Run, Stopped, Error };
+
+enum class FsmError : uint8_t {
+  None = 0,
+  Reverse,
+  NoEncoder,
+  NoTarget,
+  SpeedJump,
+  ChannelFault,
+};
 
 enum class FsmEvent : uint8_t {
   Start = 0,
@@ -16,6 +25,9 @@ enum class FsmEvent : uint8_t {
   KbCancel,
   TargetDone,
   ReverseDetect,
+  EncLoss,
+  SpeedJumpDetect,
+  ChannelFaultDetect,
   ErrAck,
 };
 

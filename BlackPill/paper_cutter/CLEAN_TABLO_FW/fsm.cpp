@@ -1,79 +1,67 @@
 #include "fsm.h"
 #include "dwin.h"
+#include "enc_tim2.h"
 
 /*
   Encoder Autonics E40S6-1000-3-T-24 + wheel Ø 8 cm
   -------------------------------------------------
-  Path: ISR counts A-rising; distance in nm (fixed-point).
-  Speed (M-method): ΔN / Δt_us, EMA-smoothed.
-  ОСТАЛОСЬ = ЗАДАНО − пройдено (целые м); прогресс VP 6030 = 0..100 %.
-  СБРОС: TargetGate — пока панель не подтвердит 0, старое ЗАДАНО не принимаем.
+  Path: TIM2 (PA0/PA1) hardware encoder; MCU polls CNT + UIF.
+  On UIF: soft path kept, TIM CNT cleared — display NOT cleared.
+  Speed (M-method): Δcounts / Δt_us, EMA-smoothed.
 */
 
-static volatile uint32_t g_pulses = 0;
-static volatile uint32_t g_pulseWin = 0;
-static volatile uint64_t g_nm = 0;
-static volatile uint32_t g_lastEdgeUs = 0;
-static volatile uint8_t g_reverseHit = 0;
-static volatile uint8_t g_revStreak = 0;
-static volatile uint32_t g_lastRevUs = 0;
+static uint64_t g_nm = 0;
+static uint32_t g_pulseWin = 0;  // forward TIM counts in current speed window
+static uint8_t g_reverseHit = 0;
+static uint8_t g_revStreak = 0;
+static uint32_t g_lastRevUs = 0;
+static uint32_t g_lastPulseMs = 0;
 
-void encoderIsrA() {
-  const uint32_t nowUs = micros();
-  const uint32_t dtUs = nowUs - g_lastEdgeUs;
-  if (dtUs < ENC_MIN_EDGE_US && nowUs >= g_lastEdgeUs) return;
+static void encoderAttach() { encTim2Begin(); }
 
-  // Sample B thrice — reject noisy transitions.
-  const int b0 = digitalRead(PIN_ENC_B);
-  const int b1 = digitalRead(PIN_ENC_B);
-  const int b2 = digitalRead(PIN_ENC_B);
-  if (b0 != b1 || b1 != b2) return;
+static void encoderClear() {
+  encTim2Clear();
+  g_nm = 0;
+  g_pulseWin = 0;
+  g_reverseHit = 0;
+  g_revStreak = 0;
+  g_lastRevUs = 0;
+}
 
-  g_lastEdgeUs = nowUs;
+static void encoderClearWindow() {
+  g_pulseWin = 0;
+  encTim2SyncBaseline();
+}
 
-  // Reverse candidate: rising A while B ≠ forward level.
-  // Need ENC_REV_CONFIRM consecutive reverse edges (gap ≤ ENC_REV_STREAK_GAP_US).
-  if (b0 != ENC_FORWARD_B_LEVEL) {
+/** Poll TIM2: accumulate path, speed window, reverse streak. */
+static void encoderPollHw() {
+  const EncTim2Delta d = encTim2Poll();
+  // d.overflow: UIF handled inside encTim2Poll (CNT reset). Soft g_nm untouched by that.
+
+  if (d.forward > 0) {
+    g_revStreak = 0;
+    g_pulseWin += d.forward;
+    g_nm += (uint64_t)d.forward * (uint64_t)NM_PER_COUNT;
+    g_lastPulseMs = millis();
+  }
+
+  if (d.reverse > 0) {
+    g_lastPulseMs = millis();
+    const uint32_t nowUs = micros();
     if (g_revStreak > 0 && (nowUs - g_lastRevUs) > ENC_REV_STREAK_GAP_US) {
       g_revStreak = 0;
     }
     g_lastRevUs = nowUs;
-    if (g_revStreak < 255) g_revStreak++;
+    uint32_t add = d.reverse;
+    if (add > 255u) add = 255u;
+    uint16_t next = (uint16_t)g_revStreak + (uint16_t)add;
+    if (next > 255u) next = 255u;
+    g_revStreak = (uint8_t)next;
     if (g_revStreak >= ENC_REV_CONFIRM) {
       g_reverseHit = 1;
       g_revStreak = 0;
     }
-    return;  // never count reverse as travel
   }
-
-  g_revStreak = 0;  // forward clears suspicion
-  g_pulses++;
-  g_pulseWin++;
-  g_nm += NM_PER_PULSE;
-}
-
-static void encoderAttach() {
-  pinMode(PIN_ENC_A, INPUT);
-  pinMode(PIN_ENC_B, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(PIN_ENC_A), encoderIsrA, RISING);
-}
-
-static void encoderClear() {
-  noInterrupts();
-  g_pulses = 0;
-  g_pulseWin = 0;
-  g_nm = 0;
-  g_lastEdgeUs = micros();
-  g_reverseHit = 0;
-  g_revStreak = 0;
-  g_lastRevUs = 0;
-  interrupts();
-}
-
-static void encoderClearWindow() {
-  noInterrupts();
-  g_pulseWin = 0;
-  interrupts();
 }
 
 static uint32_t nmToTravelCm(uint64_t nm) {
@@ -84,11 +72,19 @@ static uint32_t nmToTravelCm(uint64_t nm) {
 }
 
 static FsmState g_q = FsmState::Idle;
+static FsmError g_err = FsmError::None;
 static PlantData g_plant = {};
-static uint32_t g_lastPulseMs = 0;
 static bool g_speedShown = false;
 static uint32_t g_rpmEma = 0;
 static uint32_t g_speedEma = 0;
+
+// Channel A/B integrity (GPIO sample while TIM2 AF active)
+static int g_chALevel = -1;
+static int g_chBLevel = -1;
+static uint32_t g_chAEdgeMs = 0;
+static uint32_t g_chBEdgeMs = 0;
+static uint8_t g_chAEdges = 0;
+static uint8_t g_chBEdges = 0;
 
 // После СБРОС: не принимать старое ЗАДАНО, пока панель не отдаст 0,
 // затем принимать только новое ненулевое (ввод пользователя).
@@ -221,28 +217,81 @@ bool fsmSpeedLive() {
 }
 
 uint16_t fsmLedPeriodMs() {
-  if (g_q == FsmState::ReverseError) return 60u;
+  if (g_q == FsmState::Error) return 60u;
   return (g_q == FsmState::Run) ? 100u : 450u;
 }
 
-static void actShowReverseError() {
-  forceSpeedZero();
-  encoderClearWindow();
-  dwinSetPage(PAGE_ERROR);
-  delay(20);
-  dwinSetPage(PAGE_ERROR);
+static uint16_t pageForError(FsmError e) {
+  switch (e) {
+    case FsmError::Reverse: return PAGE_ERR_REVERSE;
+    case FsmError::NoEncoder: return PAGE_ERR_NO_ENC;
+    case FsmError::NoTarget: return PAGE_ERR_NO_TARGET;
+    case FsmError::SpeedJump: return PAGE_ERR_SPEED_JUMP;
+    case FsmError::ChannelFault: return PAGE_ERR_CHANNEL;
+    default: return PAGE_ERR_REVERSE;
+  }
 }
 
-static void actDismissReverseError() {
-  noInterrupts();
+static void actShowError(FsmError kind) {
+  forceSpeedZero();
+  encoderClearWindow();
+  g_err = kind;
+  const uint16_t page = pageForError(kind);
+  dwinSetPage(page);
+  delay(20);
+  dwinSetPage(page);
+}
+
+static void actDismissError() {
   g_reverseHit = 0;
-  interrupts();
+  g_revStreak = 0;
+  g_err = FsmError::None;
+  g_chAEdges = 0;
+  g_chBEdges = 0;
   encoderClearWindow();
   dwinWriteU16(VP_ERR_ACK, 0);
   dwinSetPage(PAGE_MAIN);
   delay(20);
   forcePushRemainProgress();
   pushSpeedRpm();
+}
+
+static void channelReset(uint32_t nowMs) {
+  g_chALevel = digitalRead(PIN_ENC_A);
+  g_chBLevel = digitalRead(PIN_ENC_B);
+  g_chAEdgeMs = nowMs;
+  g_chBEdgeMs = nowMs;
+  g_chAEdges = 0;
+  g_chBEdges = 0;
+}
+
+/** Sample PA0/PA1 edges; if one side moves and the other is dead → ChannelFault. */
+static bool channelPollFault(uint32_t nowMs) {
+  const int a = digitalRead(PIN_ENC_A);
+  const int b = digitalRead(PIN_ENC_B);
+  if (g_chALevel < 0) {
+    channelReset(nowMs);
+    return false;
+  }
+  if (a != g_chALevel) {
+    g_chALevel = a;
+    g_chAEdgeMs = nowMs;
+    if (g_chAEdges < 255) g_chAEdges++;
+  }
+  if (b != g_chBLevel) {
+    g_chBLevel = b;
+    g_chBEdgeMs = nowMs;
+    if (g_chBEdges < 255) g_chBEdges++;
+  }
+  if (g_chAEdges >= ENC_CH_MIN_EDGES &&
+      (nowMs - g_chBEdgeMs) >= ENC_CH_DEAD_MS) {
+    return true;
+  }
+  if (g_chBEdges >= ENC_CH_MIN_EDGES &&
+      (nowMs - g_chAEdgeMs) >= ENC_CH_DEAD_MS) {
+    return true;
+  }
+  return false;
 }
 
 static void actClearPlant() {
@@ -289,6 +338,8 @@ static void actPrepareRun() {
   }
   encoderClearWindow();
   forceSpeedZero();
+  channelReset(millis());
+  g_lastPulseMs = millis();  // grace window for ENC_NO_SIGNAL_MS
 }
 
 static void actKbOpen() {
@@ -355,17 +406,43 @@ static void actTargetClamp() {
   forcePushRemainProgress();
 }
 
+static FsmState tryStartRun() {
+  if (g_plant.targetM == 0) {
+    actShowError(FsmError::NoTarget);
+    return FsmState::Error;
+  }
+  actPrepareRun();
+  return FsmState::Run;
+}
+
 void fsmDispatch(const FsmEventData& ev) {
-  // Реверс — из любого режима (кроме уже показанной ошибки).
-  if (ev.type == FsmEvent::ReverseDetect && g_q != FsmState::ReverseError) {
-    actShowReverseError();
-    g_q = FsmState::ReverseError;
-    return;
+  // Ошибки датчика — из любого режима (кроме уже на экране ошибки).
+  if (g_q != FsmState::Error) {
+    if (ev.type == FsmEvent::ReverseDetect) {
+      actShowError(FsmError::Reverse);
+      g_q = FsmState::Error;
+      return;
+    }
+    if (ev.type == FsmEvent::EncLoss) {
+      actShowError(FsmError::NoEncoder);
+      g_q = FsmState::Error;
+      return;
+    }
+    if (ev.type == FsmEvent::SpeedJumpDetect) {
+      actShowError(FsmError::SpeedJump);
+      g_q = FsmState::Error;
+      return;
+    }
+    if (ev.type == FsmEvent::ChannelFaultDetect) {
+      actShowError(FsmError::ChannelFault);
+      g_q = FsmState::Error;
+      return;
+    }
   }
 
   const bool isKb = ev.type == FsmEvent::KbDigit || ev.type == FsmEvent::KbDel ||
                     ev.type == FsmEvent::KbOk || ev.type == FsmEvent::KbCancel;
-  if (isKb && g_q != FsmState::Keypad && g_q != FsmState::ReverseError) {
+  if (isKb && g_q != FsmState::Keypad && g_q != FsmState::Error) {
     actKbOpen();
     g_q = FsmState::Keypad;
   }
@@ -377,8 +454,7 @@ void fsmDispatch(const FsmEventData& ev) {
     case FsmState::Idle:
       switch (ev.type) {
         case FsmEvent::Start:
-          actPrepareRun();
-          qn = FsmState::Run;
+          qn = tryStartRun();
           break;
         case FsmEvent::Stop:
           actFreezeSpeed();
@@ -421,8 +497,7 @@ void fsmDispatch(const FsmEventData& ev) {
           break;
         case FsmEvent::Start:
           actKbCommit();
-          actPrepareRun();
-          qn = FsmState::Run;
+          qn = tryStartRun();
           break;
         case FsmEvent::Stop:
           actFreezeSpeed();
@@ -440,8 +515,7 @@ void fsmDispatch(const FsmEventData& ev) {
     case FsmState::Run:
       switch (ev.type) {
         case FsmEvent::Start:
-          actPrepareRun();
-          qn = FsmState::Run;
+          qn = tryStartRun();
           break;
         case FsmEvent::Stop:
         case FsmEvent::TargetDone:
@@ -465,8 +539,7 @@ void fsmDispatch(const FsmEventData& ev) {
     case FsmState::Stopped:
       switch (ev.type) {
         case FsmEvent::Start:
-          actPrepareRun();
-          qn = FsmState::Run;
+          qn = tryStartRun();
           break;
         case FsmEvent::Stop:
           actFreezeSpeed();
@@ -485,21 +558,21 @@ void fsmDispatch(const FsmEventData& ev) {
       }
       break;
 
-    case FsmState::ReverseError:
+    case FsmState::Error:
       switch (ev.type) {
         case FsmEvent::ErrAck:
         case FsmEvent::Start:
-          actDismissReverseError();
+          actDismissError();
           qn = FsmState::Idle;
           break;
         case FsmEvent::Reset:
           actClearPlant();
-          actDismissReverseError();
+          actDismissError();
           qn = FsmState::Idle;
           break;
         case FsmEvent::Stop:
           actFreezeSpeed();
-          qn = FsmState::ReverseError;
+          qn = FsmState::Error;
           break;
         default:
           break;
@@ -666,7 +739,7 @@ void fsmPollButtons(uint32_t nowMs) {
 
   if (nowMs - tTarget >= TARGET_POLL_MS) {
     tTarget = nowMs;
-    if (g_q != FsmState::Keypad && g_q != FsmState::ReverseError &&
+    if (g_q != FsmState::Keypad && g_q != FsmState::Error &&
         g_tgtGate == TargetGate::Normal) {
       dwinRequestReadU32(VP_TARGET);
     }
@@ -678,12 +751,11 @@ void fsmMotionTick(uint32_t nowMs) {
   static uint32_t lastSpeedUs = 0;
   static uint32_t lastTravelMs = 0;
 
-  // Реверс с ISR → экран ошибки.
-  uint8_t rev = 0;
-  noInterrupts();
-  rev = g_reverseHit;
+  // Hardware TIM2 → soft path / reverse (no per-pulse ISR).
+  encoderPollHw();
+
+  uint8_t rev = g_reverseHit;
   if (rev) g_reverseHit = 0;
-  interrupts();
   if (rev) {
     FsmEventData ev{FsmEvent::ReverseDetect, 0};
     fsmDispatch(ev);
@@ -694,11 +766,27 @@ void fsmMotionTick(uint32_t nowMs) {
     lastTravelMs = nowMs;
     lastSpeedUs = micros();
     g_lastPulseMs = nowMs;
+    channelReset(nowMs);
     return;
   }
 
-  if (g_q == FsmState::ReverseError) {
+  if (g_q == FsmState::Error) {
     forceSpeedZero();
+    return;
+  }
+
+  // Channel A/B integrity while running
+  if (g_q == FsmState::Run && channelPollFault(nowMs)) {
+    FsmEventData ev{FsmEvent::ChannelFaultDetect, 0};
+    fsmDispatch(ev);
+    return;
+  }
+
+  // No TIM activity in Run
+  if (g_q == FsmState::Run &&
+      (nowMs - g_lastPulseMs) >= ENC_NO_SIGNAL_MS) {
+    FsmEventData ev{FsmEvent::EncLoss, 0};
+    fsmDispatch(ev);
     return;
   }
 
@@ -709,11 +797,8 @@ void fsmMotionTick(uint32_t nowMs) {
     lastSpeedMs = nowMs;
     if (dtUs == 0) dtUs = (uint32_t)SPEED_PERIOD_MS * 1000u;
 
-    uint32_t win;
-    noInterrupts();
-    win = g_pulseWin;
+    const uint32_t win = g_pulseWin;
     g_pulseWin = 0;
-    interrupts();
 
     if (win > 0) g_lastPulseMs = nowMs;
 
@@ -724,10 +809,25 @@ void fsmMotionTick(uint32_t nowMs) {
     if (!live || onKeypad || idleStop) {
       forceSpeedZero();
     } else if (win > 0) {
-      const uint32_t rpmInst =
-          (uint32_t)((win * 60000000ULL) / ((uint64_t)ENC_PPR * (uint64_t)dtUs));
+      // TIM counts @ ENC_COUNTS_PER_REV per shaft revolution
+      const uint32_t rpmInst = (uint32_t)((win * 60000000ULL) /
+                                          ((uint64_t)ENC_COUNTS_PER_REV * (uint64_t)dtUs));
       const uint32_t speedInst =
-          (uint32_t)((win * (uint64_t)NM_PER_PULSE) / ((uint64_t)dtUs * 10ULL));
+          (uint32_t)((win * (uint64_t)NM_PER_COUNT) / ((uint64_t)dtUs * 10ULL));
+
+      // Скачок скорости относительно EMA
+      if (g_q == FsmState::Run && g_speedShown &&
+          g_speedEma >= SPEED_JUMP_MIN_EMA_CMS) {
+        const uint32_t limRatio =
+            (uint32_t)g_speedEma * (uint32_t)SPEED_JUMP_RATIO;
+        const uint32_t limAbs = g_speedEma + (uint32_t)SPEED_JUMP_ABS_CMS;
+        const uint32_t lim = (limRatio > limAbs) ? limRatio : limAbs;
+        if (speedInst > lim) {
+          FsmEventData ev{FsmEvent::SpeedJumpDetect, 0};
+          fsmDispatch(ev);
+          return;
+        }
+      }
 
       g_rpmEma = (rpmInst + (uint32_t)(SPEED_EMA_N - 1u) * g_rpmEma) / SPEED_EMA_N;
       g_speedEma =
@@ -743,12 +843,7 @@ void fsmMotionTick(uint32_t nowMs) {
   if (nowMs - lastTravelMs >= TRAVEL_PERIOD_MS) {
     lastTravelMs = nowMs;
 
-    uint64_t nm;
-    noInterrupts();
-    nm = g_nm;
-    interrupts();
-
-    g_plant.travelM = nmToTravelCm(nm);
+    g_plant.travelM = nmToTravelCm(g_nm);
     if (g_q != FsmState::Keypad) pushTravel();
 
     if (g_q == FsmState::Run && g_plant.targetM > 0 &&
