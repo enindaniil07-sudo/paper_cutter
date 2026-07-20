@@ -1,0 +1,13 @@
+**/node_modules/
+**/__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db
+DWIN/Software/
+DWIN/TEST_PROJECT/
+DWIN/TEST_PROJECT_2/
+BlackPill/Arduino_Core_STM32/
+BlackPill/openplc-editor/
+BlackPill/openplc-runtime/
+**/.vscode/
+**/build/
