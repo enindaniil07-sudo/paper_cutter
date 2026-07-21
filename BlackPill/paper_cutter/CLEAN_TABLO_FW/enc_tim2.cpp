@@ -61,6 +61,13 @@ void encTim2SyncBaseline() {
 
 uint32_t encTim2Cnt() { return TIM2->CNT; }
 
+void encTim2ReadAb(uint8_t& a, uint8_t& b) {
+  // IDR reflects pin voltage even in AF mode (TIM does not steal the pad read).
+  const uint32_t idr = GPIOA->IDR;
+  a = (uint8_t)(idr & 1u);
+  b = (uint8_t)((idr >> 1) & 1u);
+}
+
 EncTim2Delta encTim2Poll() {
   EncTim2Delta d = {};
   d.forward = 0;

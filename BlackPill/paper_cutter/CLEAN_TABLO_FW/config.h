@@ -35,7 +35,7 @@ static constexpr uint16_t SPEED_IDLE_ZERO_MS = 150;
 static constexpr uint16_t RESET_TARGET_LOCK_MS = 5000;
 static constexpr uint8_t SPEED_EMA_N = 4;
 
-// Reverse: TIM counts (mode 2). 80 counts ≈ 40 old A-rising ≈ 14° shaft.
+// Reverse: TIM counts (mode 2). 80 counts ≈ 14° shaft @ 2000 counts/rev.
 static constexpr uint8_t ENC_REV_CONFIRM = 80;
 static constexpr uint32_t ENC_REV_STREAK_GAP_US = 80000;
 
@@ -83,13 +83,21 @@ static constexpr uint16_t PAGE_ERR_CHANNEL = 15;
 // Legacy alias
 static constexpr uint16_t PAGE_ERROR = PAGE_ERR_REVERSE;
 
-// Run без импульсов TIM → «нет сигнала»
+// После СТАРТ: нет импульсов TIM дольше N мс → стр. 12 «нет сигнала».
+// Любой импульс/смена CNT сбрасывает таймер — при вращении не сработает.
+static constexpr bool ENC_NO_SIGNAL_ENABLE = true;
 static constexpr uint32_t ENC_NO_SIGNAL_MS = 4000u;
-// Один канал активен, второй молчит
-static constexpr uint32_t ENC_CH_DEAD_MS = 500u;
-static constexpr uint8_t ENC_CH_MIN_EDGES = 8;
-// Скачок: instant > max(EMA×ratio, EMA+abs) при EMA ≥ floor
+// Обрыв A или B (стр. 15): оба канала уже работали, вал крутится (TIM),
+// один молчит ≥ DEAD_MS, второй даёт фронты. Сэмпл — GPIO IDR (AF TIM2).
+static constexpr bool ENC_CH_FAULT_ENABLE = true;
+static constexpr uint32_t ENC_CH_DEAD_MS = 2000u;
+static constexpr uint32_t ENC_CH_ARM_MS = 1500u;
+static constexpr uint32_t ENC_CH_MOTION_MS = 300u;
+static constexpr uint8_t ENC_CH_MIN_EDGES = 16;
+static constexpr uint8_t ENC_CH_LIVE_MIN = 8;
+static constexpr bool SPEED_JUMP_ENABLE = false;
+static constexpr uint32_t SPEED_JUMP_ARM_MS = 2000u;
 static constexpr uint8_t SPEED_JUMP_RATIO = 4;
-static constexpr uint16_t SPEED_JUMP_ABS_CMS = 150;   // +1.5 м/с
-static constexpr uint16_t SPEED_JUMP_MIN_EMA_CMS = 30; // EMA ≥ 0.30 м/с
+static constexpr uint16_t SPEED_JUMP_ABS_CMS = 150;
+static constexpr uint16_t SPEED_JUMP_MIN_EMA_CMS = 50;
 

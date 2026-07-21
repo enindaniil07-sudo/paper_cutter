@@ -16,6 +16,8 @@ static uint8_t g_reverseHit = 0;
 static uint8_t g_revStreak = 0;
 static uint32_t g_lastRevUs = 0;
 static uint32_t g_lastPulseMs = 0;
+static bool g_encSeenThisRun = false;
+static uint32_t g_encCntWatch = 0;
 
 static void encoderAttach() { encTim2Begin(); }
 
@@ -34,19 +36,23 @@ static void encoderClearWindow() {
 }
 
 /** Poll TIM2: accumulate path, speed window, reverse streak. */
-static void encoderPollHw() {
+static void encoderPollHw(uint32_t nowMs) {
   const EncTim2Delta d = encTim2Poll();
   // d.overflow: UIF handled inside encTim2Poll (CNT reset). Soft g_nm untouched by that.
+
+  // Use loop nowMs (not millis()) so stamps never run ahead of the no-signal check.
+  if (d.forward > 0 || d.reverse > 0 || d.overflow) {
+    g_lastPulseMs = nowMs;
+    g_encSeenThisRun = true;
+  }
 
   if (d.forward > 0) {
     g_revStreak = 0;
     g_pulseWin += d.forward;
     g_nm += (uint64_t)d.forward * (uint64_t)NM_PER_COUNT;
-    g_lastPulseMs = millis();
   }
 
   if (d.reverse > 0) {
-    g_lastPulseMs = millis();
     const uint32_t nowUs = micros();
     if (g_revStreak > 0 && (nowUs - g_lastRevUs) > ENC_REV_STREAK_GAP_US) {
       g_revStreak = 0;
@@ -78,13 +84,19 @@ static bool g_speedShown = false;
 static uint32_t g_rpmEma = 0;
 static uint32_t g_speedEma = 0;
 
-// Channel A/B integrity (GPIO sample while TIM2 AF active)
-static int g_chALevel = -1;
-static int g_chBLevel = -1;
+// Channel A/B integrity — sample PA0/PA1 via encTim2ReadAb (IDR + TIM AF).
+static uint8_t g_chALevel = 0;
+static uint8_t g_chBLevel = 0;
+static bool g_chHaveLevel = false;
 static uint32_t g_chAEdgeMs = 0;
 static uint32_t g_chBEdgeMs = 0;
-static uint8_t g_chAEdges = 0;
+static uint8_t g_chAEdges = 0;      // prove-alive this Run
 static uint8_t g_chBEdges = 0;
+static uint8_t g_chALiveWin = 0;    // edges while peer may be dying
+static uint8_t g_chBLiveWin = 0;
+static bool g_chASeen = false;
+static bool g_chBSeen = false;
+static uint32_t g_runStartMs = 0;
 
 // После СБРОС: не принимать старое ЗАДАНО, пока панель не отдаст 0,
 // затем принимать только новое ненулевое (ввод пользователя).
@@ -248,6 +260,11 @@ static void actDismissError() {
   g_err = FsmError::None;
   g_chAEdges = 0;
   g_chBEdges = 0;
+  g_chALiveWin = 0;
+  g_chBLiveWin = 0;
+  g_chASeen = false;
+  g_chBSeen = false;
+  g_chHaveLevel = false;
   encoderClearWindow();
   dwinWriteU16(VP_ERR_ACK, 0);
   dwinSetPage(PAGE_MAIN);
@@ -257,38 +274,78 @@ static void actDismissError() {
 }
 
 static void channelReset(uint32_t nowMs) {
-  g_chALevel = digitalRead(PIN_ENC_A);
-  g_chBLevel = digitalRead(PIN_ENC_B);
+  uint8_t a = 0, b = 0;
+  encTim2ReadAb(a, b);
+  g_chALevel = a;
+  g_chBLevel = b;
+  g_chHaveLevel = true;
   g_chAEdgeMs = nowMs;
   g_chBEdgeMs = nowMs;
   g_chAEdges = 0;
   g_chBEdges = 0;
+  g_chALiveWin = 0;
+  g_chBLiveWin = 0;
+  g_chASeen = false;
+  g_chBSeen = false;
 }
 
-/** Sample PA0/PA1 edges; if one side moves and the other is dead → ChannelFault. */
+/**
+ * Обрыв A/B: оба канала уже «доказали жизнь» в этом Run,
+ * один молчит ≥ ENC_CH_DEAD_MS, второй за окно дал ≥ ENC_CH_LIVE_MIN фронтов.
+ * Движение: недавний TIM **или** фронт на любом канале (обрыв A → CNT стоит).
+ * Сэмпл — GPIO IDR через encTim2ReadAb.
+ */
 static bool channelPollFault(uint32_t nowMs) {
-  const int a = digitalRead(PIN_ENC_A);
-  const int b = digitalRead(PIN_ENC_B);
-  if (g_chALevel < 0) {
+  if ((int32_t)(nowMs - g_runStartMs) < (int32_t)ENC_CH_ARM_MS) return false;
+
+  uint8_t a = 0, b = 0;
+  encTim2ReadAb(a, b);
+  if (!g_chHaveLevel) {
     channelReset(nowMs);
     return false;
   }
+
   if (a != g_chALevel) {
     g_chALevel = a;
     g_chAEdgeMs = nowMs;
     if (g_chAEdges < 255) g_chAEdges++;
+    if (g_chALiveWin < 255) g_chALiveWin++;
+    if (g_chAEdges >= ENC_CH_MIN_EDGES) g_chASeen = true;
   }
   if (b != g_chBLevel) {
     g_chBLevel = b;
     g_chBEdgeMs = nowMs;
     if (g_chBEdges < 255) g_chBEdges++;
+    if (g_chBLiveWin < 255) g_chBLiveWin++;
+    if (g_chBEdges >= ENC_CH_MIN_EDGES) g_chBSeen = true;
   }
-  if (g_chAEdges >= ENC_CH_MIN_EDGES &&
-      (nowMs - g_chBEdgeMs) >= ENC_CH_DEAD_MS) {
+
+  if (!g_chASeen || !g_chBSeen) return false;
+
+  const int32_t ageA = (int32_t)(nowMs - g_chAEdgeMs);
+  const int32_t ageB = (int32_t)(nowMs - g_chBEdgeMs);
+  const int32_t sinceTim = (int32_t)(nowMs - g_lastPulseMs);
+  const bool moving = (sinceTim <= (int32_t)ENC_CH_MOTION_MS) ||
+                      (ageA <= (int32_t)ENC_CH_MOTION_MS) ||
+                      (ageB <= (int32_t)ENC_CH_MOTION_MS);
+  if (!moving) return false;
+
+  // Оба живы — сбросить окна «односторонней» активности.
+  if (ageA < (int32_t)ENC_CH_DEAD_MS && ageB < (int32_t)ENC_CH_DEAD_MS) {
+    g_chALiveWin = 0;
+    g_chBLiveWin = 0;
+    return false;
+  }
+
+  const int32_t fresh = (int32_t)(ENC_CH_DEAD_MS / 4u);
+  // B мёртв, A крутится
+  if (ageB >= (int32_t)ENC_CH_DEAD_MS && ageA < fresh &&
+      g_chALiveWin >= ENC_CH_LIVE_MIN) {
     return true;
   }
-  if (g_chBEdges >= ENC_CH_MIN_EDGES &&
-      (nowMs - g_chAEdgeMs) >= ENC_CH_DEAD_MS) {
+  // A мёртв, B крутится
+  if (ageA >= (int32_t)ENC_CH_DEAD_MS && ageB < fresh &&
+      g_chBLiveWin >= ENC_CH_LIVE_MIN) {
     return true;
   }
   return false;
@@ -338,8 +395,16 @@ static void actPrepareRun() {
   }
   encoderClearWindow();
   forceSpeedZero();
-  channelReset(millis());
-  g_lastPulseMs = millis();  // grace window for ENC_NO_SIGNAL_MS
+  const uint32_t t = millis();
+  channelReset(t);
+  g_runStartMs = t;
+  // Same stamp as run start; fsmMotionTick may still see an older nowMs this
+  // loop — no-signal check must tolerate lastPulse >= nowMs (see below).
+  g_lastPulseMs = t;
+  g_encSeenThisRun = false;
+  g_encCntWatch = encTim2Cnt();
+  g_revStreak = 0;
+  g_reverseHit = 0;
 }
 
 static void actKbOpen() {
@@ -752,7 +817,7 @@ void fsmMotionTick(uint32_t nowMs) {
   static uint32_t lastTravelMs = 0;
 
   // Hardware TIM2 → soft path / reverse (no per-pulse ISR).
-  encoderPollHw();
+  encoderPollHw(nowMs);
 
   uint8_t rev = g_reverseHit;
   if (rev) g_reverseHit = 0;
@@ -775,19 +840,33 @@ void fsmMotionTick(uint32_t nowMs) {
     return;
   }
 
-  // Channel A/B integrity while running
-  if (g_q == FsmState::Run && channelPollFault(nowMs)) {
+  // Обрыв A/B: IDR PA0/PA1 + асимметрия фронтов при живом TIM.
+  if (ENC_CH_FAULT_ENABLE && g_q == FsmState::Run && channelPollFault(nowMs)) {
     FsmEventData ev{FsmEvent::ChannelFaultDetect, 0};
     fsmDispatch(ev);
     return;
   }
 
-  // No TIM activity in Run
-  if (g_q == FsmState::Run &&
-      (nowMs - g_lastPulseMs) >= ENC_NO_SIGNAL_MS) {
-    FsmEventData ev{FsmEvent::EncLoss, 0};
-    fsmDispatch(ev);
-    return;
+  // Смена CNT = импульсы есть
+  if (g_q == FsmState::Run) {
+    const uint32_t cnt = encTim2Cnt();
+    if (cnt != g_encCntWatch) {
+      g_encCntWatch = cnt;
+      g_lastPulseMs = nowMs;
+      g_encSeenThisRun = true;
+    }
+  }
+
+  // СТАРТ (Run) + нет импульсов ENC_NO_SIGNAL_MS → ошибка энкодера.
+  // Signed delta: if START set g_lastPulseMs via millis() after this loop's nowMs
+  // was sampled, unsigned (nowMs - last) wraps to ~4e9 and falsely trips.
+  if (ENC_NO_SIGNAL_ENABLE && g_q == FsmState::Run) {
+    const int32_t quietMs = (int32_t)(nowMs - g_lastPulseMs);
+    if (quietMs >= (int32_t)ENC_NO_SIGNAL_MS) {
+      FsmEventData ev{FsmEvent::EncLoss, 0};
+      fsmDispatch(ev);
+      return;
+    }
   }
 
   if (nowMs - lastSpeedMs >= SPEED_PERIOD_MS) {
@@ -804,7 +883,8 @@ void fsmMotionTick(uint32_t nowMs) {
 
     const bool onKeypad = (g_q == FsmState::Keypad);
     const bool live = fsmSpeedLive();
-    const bool idleStop = (nowMs - g_lastPulseMs >= SPEED_IDLE_ZERO_MS);
+    const int32_t sincePulse = (int32_t)(nowMs - g_lastPulseMs);
+    const bool idleStop = (sincePulse >= (int32_t)SPEED_IDLE_ZERO_MS);
 
     if (!live || onKeypad || idleStop) {
       forceSpeedZero();
@@ -815,9 +895,10 @@ void fsmMotionTick(uint32_t nowMs) {
       const uint32_t speedInst =
           (uint32_t)((win * (uint64_t)NM_PER_COUNT) / ((uint64_t)dtUs * 10ULL));
 
-      // Скачок скорости относительно EMA
-      if (g_q == FsmState::Run && g_speedShown &&
-          g_speedEma >= SPEED_JUMP_MIN_EMA_CMS) {
+      // Скачок скорости — выкл. по умолчанию
+      if (SPEED_JUMP_ENABLE && g_q == FsmState::Run && g_speedShown &&
+          g_speedEma >= SPEED_JUMP_MIN_EMA_CMS &&
+          (nowMs - g_runStartMs) >= SPEED_JUMP_ARM_MS) {
         const uint32_t limRatio =
             (uint32_t)g_speedEma * (uint32_t)SPEED_JUMP_RATIO;
         const uint32_t limAbs = g_speedEma + (uint32_t)SPEED_JUMP_ABS_CMS;

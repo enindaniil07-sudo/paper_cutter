@@ -18,3 +18,5 @@ void encTim2SyncBaseline();
 /** Read CNT, handle UIF (reset TIM CNT on overflow), return deltas. */
 EncTim2Delta encTim2Poll();
 uint32_t encTim2Cnt();
+/** PA0/PA1 levels via GPIO IDR (valid while AF TIM2). a/b are 0 or 1. */
+void encTim2ReadAb(uint8_t& a, uint8_t& b);
