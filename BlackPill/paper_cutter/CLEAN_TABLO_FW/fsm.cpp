@@ -110,11 +110,15 @@ static uint16_t g_cacheSpeed = 0xFFFF;
 static uint16_t g_cacheProgress = 0xFFFF;
 static uint16_t g_cacheKb = 0xFFFF;
 static uint32_t g_cacheBrake = 0xFFFFFFFFu;
+static uint16_t g_cacheBrakeOn = 0xFFFF;
+static uint16_t g_cacheBrakeOff = 0xFFFF;
+static uint16_t g_cacheSpeedLim = 0xFFFF;
 
 static void invalidateCaches() {
   g_cacheTarget = g_cacheRemain = 0xFFFFFFFFu;
   g_cacheSpeed = g_cacheProgress = g_cacheKb = 0xFFFF;
   g_cacheBrake = 0xFFFFFFFFu;
+  g_cacheBrakeOn = g_cacheBrakeOff = g_cacheSpeedLim = 0xFFFF;
 }
 
 static uint32_t targetCm() { return g_plant.targetM * 100u; }
@@ -156,9 +160,37 @@ static void pushKb() {
   g_cacheKb = v;
 }
 
-static void pushBrake() {
-  const uint32_t v = min(g_plant.brakeBuf, (uint32_t)MAX_METERS);
-  dwinWriteU32IfChanged(VP_BRAKE, v, g_cacheBrake);
+static void pushSettings() {
+  dwinWriteU32IfChanged(VP_BRAKE, min(g_plant.brakeM, (uint32_t)MAX_METERS), g_cacheBrake);
+  dwinWriteU16IfChanged(VP_BRAKE_ON_MS, g_plant.brakeOnMs, g_cacheBrakeOn);
+  dwinWriteU16IfChanged(VP_BRAKE_OFF_MS, g_plant.brakeOffMs, g_cacheBrakeOff);
+  dwinWriteU16IfChanged(VP_SPEED_LIMIT, g_plant.speedLimitCms, g_cacheSpeedLim);
+}
+
+static void applySettingsVp(uint16_t vp, uint32_t value) {
+  if (vp == VP_BRAKE) {
+    if (value > MAX_METERS) value = MAX_METERS;
+    g_plant.brakeM = value;
+    g_cacheBrake = value;
+    return;
+  }
+  if (vp == VP_BRAKE_ON_MS) {
+    if (value > 9999u) value = 9999u;
+    g_plant.brakeOnMs = (uint16_t)value;
+    g_cacheBrakeOn = (uint16_t)value;
+    return;
+  }
+  if (vp == VP_BRAKE_OFF_MS) {
+    if (value > 9999u) value = 9999u;
+    g_plant.brakeOffMs = (uint16_t)value;
+    g_cacheBrakeOff = (uint16_t)value;
+    return;
+  }
+  if (vp == VP_SPEED_LIMIT) {
+    if (value > MAX_SPEED_CMS) value = MAX_SPEED_CMS;
+    g_plant.speedLimitCms = (uint16_t)value;
+    g_cacheSpeedLim = (uint16_t)value;
+  }
 }
 
 static void pushRemain() {
@@ -473,14 +505,12 @@ static void actKbCancel() {
 
 static void actSettingsOpen() {
   forceSpeedZero();
-  g_plant.brakeBuf = g_plant.brakeM;
-  g_plant.brakeFresh = true;
-  // Pic_Next=16 already switches page in touch; UART setPage can fight DGUS
-  // compositing on some panels ("settings under main"). Only sync if needed.
+  // Pic_Next=16 already switches page; UART setPage can fight compositing.
   delay(30);
   dwinSetPage(PAGE_SETTINGS);
   g_cacheBrake = 0xFFFFFFFFu;
-  pushBrake();
+  g_cacheBrakeOn = g_cacheBrakeOff = g_cacheSpeedLim = 0xFFFF;
+  pushSettings();
 }
 
 static void actSettingsBack() {
@@ -492,42 +522,6 @@ static void actSettingsBack() {
   g_cacheTarget = g_plant.targetM;
   forcePushRemainProgress();
   pushSpeed();
-}
-
-static void actBrakeDigit(uint8_t d) {
-  if (d > 9) return;
-  if (g_plant.brakeFresh) {
-    g_plant.brakeBuf = 0;
-    g_plant.brakeFresh = false;
-  }
-  const uint32_t next = g_plant.brakeBuf * 10u + d;
-  if (next > MAX_METERS) return;
-  g_plant.brakeBuf = next;
-  pushBrake();
-}
-
-static void actBrakeDel() {
-  if (g_plant.brakeFresh) {
-    g_plant.brakeBuf = 0;
-    g_plant.brakeFresh = false;
-  } else {
-    g_plant.brakeBuf /= 10u;
-  }
-  pushBrake();
-}
-
-static void actBrakeCommit() {
-  if (g_plant.brakeBuf > MAX_METERS) g_plant.brakeBuf = MAX_METERS;
-  g_plant.brakeM = g_plant.brakeBuf;
-  g_plant.brakeFresh = true;
-  // Value stored only — braking motion logic not wired yet.
-  actSettingsBack();
-}
-
-static void actBrakeCancel() {
-  g_plant.brakeBuf = g_plant.brakeM;
-  g_plant.brakeFresh = true;
-  actSettingsBack();
 }
 
 static void actTargetClamp() {
@@ -572,16 +566,12 @@ void fsmDispatch(const FsmEventData& ev) {
   }
 
     // If panel already jumped to page 16 (Pic_Next) but MCU still Idle/Stopped,
-    // brake keys must enter Settings instead of opening ЗАДАНО keypad.
-    if (ev.fromBrake && g_q != FsmState::Settings && g_q != FsmState::Error) {
-      actSettingsOpen();
-      g_q = FsmState::Settings;
-    }
+    // НАЗАД / settings VP must land in Settings instead of being ignored.
+    // (VarInput edits are applied via applySettingsVp, not keypad events.)
 
   const bool isKb = ev.type == FsmEvent::KbDigit || ev.type == FsmEvent::KbDel ||
                     ev.type == FsmEvent::KbOk || ev.type == FsmEvent::KbCancel;
-  // Brake keys on page 16 must not open ЗАДАНО keypad.
-  if (isKb && !ev.fromBrake && g_q != FsmState::Keypad && g_q != FsmState::Error &&
+  if (isKb && g_q != FsmState::Keypad && g_q != FsmState::Error &&
       g_q != FsmState::Settings) {
     actKbOpen();
     g_q = FsmState::Keypad;
@@ -608,6 +598,10 @@ void fsmDispatch(const FsmEventData& ev) {
         case FsmEvent::SettingsOpen:
           actSettingsOpen();
           qn = FsmState::Settings;
+          break;
+        case FsmEvent::SettingsBack:
+          actSettingsBack();
+          qn = FsmState::Idle;
           break;
         default:
           break;
@@ -724,25 +718,12 @@ void fsmDispatch(const FsmEventData& ev) {
 
     case FsmState::Settings:
       switch (ev.type) {
-        case FsmEvent::KbDigit:
-          actBrakeDigit(ev.digit);
-          qn = FsmState::Settings;
-          break;
-        case FsmEvent::KbDel:
-          actBrakeDel();
-          qn = FsmState::Settings;
-          break;
-        case FsmEvent::KbOk:
-          actBrakeCommit();
-          qn = FsmState::Idle;
-          break;
-        case FsmEvent::KbCancel:
         case FsmEvent::SettingsBack:
-          actBrakeCancel();
+          actSettingsBack();
           qn = FsmState::Idle;
           break;
         case FsmEvent::Stop:
-          actBrakeCancel();
+          actSettingsBack();
           actKbCancel();
           qn = FsmState::Idle;
           break;
@@ -765,7 +746,6 @@ void fsmDispatch(const FsmEventData& ev) {
 
 static bool mapVpToEvent(uint16_t vp, FsmEventData& ev) {
   ev.digit = 0;
-  ev.fromBrake = false;
   switch (vp) {
     case VP_STOP: ev.type = FsmEvent::Stop; return true;
     case VP_RESET: ev.type = FsmEvent::Reset; return true;
@@ -774,31 +754,18 @@ static bool mapVpToEvent(uint16_t vp, FsmEventData& ev) {
     case VP_SETTINGS_BACK: ev.type = FsmEvent::SettingsBack; return true;
     case VP_KB_OPEN: ev.type = FsmEvent::KbOpen; return true;
     case VP_KB_OK: ev.type = FsmEvent::KbOk; return true;
-    case VP_BRK_OK: ev.type = FsmEvent::KbOk; ev.fromBrake = true; return true;
     case VP_KB_CANCEL: ev.type = FsmEvent::KbCancel; return true;
-    case VP_BRK_CANCEL: ev.type = FsmEvent::KbCancel; ev.fromBrake = true; return true;
     case VP_KB_DEL: ev.type = FsmEvent::KbDel; return true;
-    case VP_BRK_DEL: ev.type = FsmEvent::KbDel; ev.fromBrake = true; return true;
     case VP_KB_0: ev.type = FsmEvent::KbDigit; ev.digit = 0; return true;
-    case VP_BRK_0: ev.type = FsmEvent::KbDigit; ev.digit = 0; ev.fromBrake = true; return true;
     case VP_KB_1: ev.type = FsmEvent::KbDigit; ev.digit = 1; return true;
-    case VP_BRK_1: ev.type = FsmEvent::KbDigit; ev.digit = 1; ev.fromBrake = true; return true;
     case VP_KB_2: ev.type = FsmEvent::KbDigit; ev.digit = 2; return true;
-    case VP_BRK_2: ev.type = FsmEvent::KbDigit; ev.digit = 2; ev.fromBrake = true; return true;
     case VP_KB_3: ev.type = FsmEvent::KbDigit; ev.digit = 3; return true;
-    case VP_BRK_3: ev.type = FsmEvent::KbDigit; ev.digit = 3; ev.fromBrake = true; return true;
     case VP_KB_4: ev.type = FsmEvent::KbDigit; ev.digit = 4; return true;
-    case VP_BRK_4: ev.type = FsmEvent::KbDigit; ev.digit = 4; ev.fromBrake = true; return true;
     case VP_KB_5: ev.type = FsmEvent::KbDigit; ev.digit = 5; return true;
-    case VP_BRK_5: ev.type = FsmEvent::KbDigit; ev.digit = 5; ev.fromBrake = true; return true;
     case VP_KB_6: ev.type = FsmEvent::KbDigit; ev.digit = 6; return true;
-    case VP_BRK_6: ev.type = FsmEvent::KbDigit; ev.digit = 6; ev.fromBrake = true; return true;
     case VP_KB_7: ev.type = FsmEvent::KbDigit; ev.digit = 7; return true;
-    case VP_BRK_7: ev.type = FsmEvent::KbDigit; ev.digit = 7; ev.fromBrake = true; return true;
     case VP_KB_8: ev.type = FsmEvent::KbDigit; ev.digit = 8; return true;
-    case VP_BRK_8: ev.type = FsmEvent::KbDigit; ev.digit = 8; ev.fromBrake = true; return true;
     case VP_KB_9: ev.type = FsmEvent::KbDigit; ev.digit = 9; return true;
-    case VP_BRK_9: ev.type = FsmEvent::KbDigit; ev.digit = 9; ev.fromBrake = true; return true;
     default: return false;
   }
 }
@@ -885,13 +852,23 @@ void fsmOnDwinVp(uint16_t vp, uint32_t value) {
     return;
   }
 
-  if ((vp == VP_RESET || vp == VP_ERR_ACK || vp == VP_SETTINGS) && value != 0) {
+  if (vp == VP_BRAKE || vp == VP_BRAKE_ON_MS || vp == VP_BRAKE_OFF_MS ||
+      vp == VP_SPEED_LIMIT) {
+    applySettingsVp(vp, value);
+    return;
+  }
+
+  if ((vp == VP_RESET || vp == VP_ERR_ACK || vp == VP_SETTINGS ||
+       vp == VP_SETTINGS_BACK) &&
+      value != 0) {
     dwinWriteU16(vp, 0);
     FsmEventData ev{};
     if (vp == VP_RESET) {
       ev.type = FsmEvent::Reset;
     } else if (vp == VP_ERR_ACK) {
       ev.type = FsmEvent::ErrAck;
+    } else if (vp == VP_SETTINGS_BACK) {
+      ev.type = FsmEvent::SettingsBack;
     } else {
       ev.type = FsmEvent::SettingsOpen;
     }
@@ -940,9 +917,17 @@ void fsmPollButtons(uint32_t nowMs) {
 
   if (nowMs - tTarget >= TARGET_POLL_MS) {
     tTarget = nowMs;
-    if (g_q != FsmState::Keypad && g_q != FsmState::Error &&
-        g_q != FsmState::Settings &&
-        g_tgtGate == TargetGate::Normal) {
+    if (g_q == FsmState::Settings) {
+      static uint8_t setIdx = 0;
+      switch (setIdx % 4u) {
+        case 0: dwinRequestReadU32(VP_BRAKE); break;
+        case 1: dwinRequestReadU16(VP_BRAKE_ON_MS); break;
+        case 2: dwinRequestReadU16(VP_BRAKE_OFF_MS); break;
+        default: dwinRequestReadU16(VP_SPEED_LIMIT); break;
+      }
+      setIdx = (uint8_t)(setIdx + 1u);
+    } else if (g_q != FsmState::Keypad && g_q != FsmState::Error &&
+               g_tgtGate == TargetGate::Normal) {
       dwinRequestReadU32(VP_TARGET);
     }
   }
@@ -1080,11 +1065,14 @@ void fsmBegin() {
   invalidateCaches();
   g_plant = {};
   g_plant.kbFresh = true;
-  g_plant.brakeFresh = true;
+  g_plant.brakeOnMs = 50;
+  g_plant.brakeOffMs = 50;
+  g_plant.speedLimitCms = 0;
   encoderClear();
   forceSpeedZero();
   writeAllDisplayZeros();
   g_cacheTarget = g_cacheRemain = 0;
   g_cacheProgress = g_cacheSpeed = 0;
+  pushSettings();
   dwinSetPage(PAGE_MAIN);
 }

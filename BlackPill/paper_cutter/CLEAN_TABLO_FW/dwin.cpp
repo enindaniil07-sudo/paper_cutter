@@ -141,8 +141,8 @@ void dwinPoll(DwinVpHandler onVp) {
       if (words >= 1 && s_rxLen >= 9) {
         const uint16_t w0 = ((uint16_t)s_rx[7] << 8) | s_rx[8];
         uint32_t val = w0;
-        // Long (VP+VP+1): ЗАДАНО до 99999
-        if (words >= 2 && s_rxLen >= 11 && vp == VP_TARGET) {
+        // Long (VP+VP+1): ЗАДАНО / расстояние торможения до 99999
+        if (words >= 2 && s_rxLen >= 11 && (vp == VP_TARGET || vp == VP_BRAKE)) {
           const uint16_t w1 = ((uint16_t)s_rx[9] << 8) | s_rx[10];
           val = ((uint32_t)w0 << 16) | w1;
         }

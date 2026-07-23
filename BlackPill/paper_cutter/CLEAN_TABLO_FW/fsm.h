@@ -36,7 +36,6 @@ enum class FsmEvent : uint8_t {
 struct FsmEventData {
   FsmEvent type;
   uint8_t digit;
-  bool fromBrake;  // page-16 brake keypad (not ЗАДАНО)
 };
 
 struct PlantData {
@@ -47,9 +46,10 @@ struct PlantData {
   uint16_t progressPct;  // 0..100
   uint32_t kbBuf;
   bool kbFresh;
-  uint32_t brakeM;       // расстояние торможения, м (UI only for now)
-  uint32_t brakeBuf;
-  bool brakeFresh;
+  uint32_t brakeM;         // расстояние торможения, м
+  uint16_t brakeOnMs;      // длительность ШИМ «1» (тормоз)
+  uint16_t brakeOffMs;     // длительность ШИМ «0» (отпуск)
+  uint16_t speedLimitCms;  // ограничение скорости ×0.01 м/с
 };
 
 void fsmBegin();
