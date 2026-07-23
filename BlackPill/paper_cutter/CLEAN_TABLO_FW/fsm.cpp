@@ -18,6 +18,7 @@ static uint32_t g_lastRevUs = 0;
 static uint32_t g_lastPulseMs = 0;
 static bool g_encSeenThisRun = false;
 static uint32_t g_encCntWatch = 0;
+static bool g_encActivity = false;  // pulses this poll (for auto-Run)
 
 static void encoderAttach() { encTim2Begin(); }
 
@@ -39,9 +40,11 @@ static void encoderClearWindow() {
 static void encoderPollHw(uint32_t nowMs) {
   const EncTim2Delta d = encTim2Poll();
   // d.overflow: UIF handled inside encTim2Poll (CNT reset). Soft g_nm untouched by that.
+  g_encActivity = false;
 
   // Use loop nowMs (not millis()) so stamps never run ahead of the no-signal check.
   if (d.forward > 0 || d.reverse > 0 || d.overflow) {
+    g_encActivity = true;
     g_lastPulseMs = nowMs;
     g_encSeenThisRun = true;
   }
@@ -81,19 +84,16 @@ static FsmState g_q = FsmState::Idle;
 static FsmError g_err = FsmError::None;
 static PlantData g_plant = {};
 static bool g_speedShown = false;
-static uint32_t g_rpmEma = 0;
 static uint32_t g_speedEma = 0;
 
-// Channel A/B integrity — sample PA0/PA1 via encTim2ReadAb (IDR + TIM AF).
+// Channel A/B integrity — TIM CCxIF + IDR (PA0/PA1).
 static uint8_t g_chALevel = 0;
 static uint8_t g_chBLevel = 0;
 static bool g_chHaveLevel = false;
 static uint32_t g_chAEdgeMs = 0;
 static uint32_t g_chBEdgeMs = 0;
-static uint8_t g_chAEdges = 0;      // prove-alive this Run
+static uint8_t g_chAEdges = 0;  // prove-alive this Run
 static uint8_t g_chBEdges = 0;
-static uint8_t g_chALiveWin = 0;    // edges while peer may be dying
-static uint8_t g_chBLiveWin = 0;
 static bool g_chASeen = false;
 static bool g_chBSeen = false;
 static uint32_t g_runStartMs = 0;
@@ -107,13 +107,14 @@ static uint32_t g_tgtResetStartMs = 0;
 static uint32_t g_cacheTarget = 0xFFFFFFFFu;
 static uint32_t g_cacheRemain = 0xFFFFFFFFu;
 static uint16_t g_cacheSpeed = 0xFFFF;
-static uint16_t g_cacheRpm = 0xFFFF;
 static uint16_t g_cacheProgress = 0xFFFF;
 static uint16_t g_cacheKb = 0xFFFF;
+static uint32_t g_cacheBrake = 0xFFFFFFFFu;
 
 static void invalidateCaches() {
   g_cacheTarget = g_cacheRemain = 0xFFFFFFFFu;
-  g_cacheSpeed = g_cacheRpm = g_cacheProgress = g_cacheKb = 0xFFFF;
+  g_cacheSpeed = g_cacheProgress = g_cacheKb = 0xFFFF;
+  g_cacheBrake = 0xFFFFFFFFu;
 }
 
 static uint32_t targetCm() { return g_plant.targetM * 100u; }
@@ -146,7 +147,6 @@ static void writeAllDisplayZeros() {
   dwinWriteU16(VP_PROGRESS, 0);
   dwinWriteU16(VP_PROGRESS, 0);
   dwinWriteU16(VP_SPEED, 0);
-  dwinWriteU16(VP_RPM, 0);
 }
 
 static void pushKb() {
@@ -154,6 +154,11 @@ static void pushKb() {
   dwinWriteU16(VP_KB_BUF, v);
   dwinWriteU16(VP_KB_BUF, v);
   g_cacheKb = v;
+}
+
+static void pushBrake() {
+  const uint32_t v = min(g_plant.brakeBuf, (uint32_t)MAX_METERS);
+  dwinWriteU32IfChanged(VP_BRAKE, v, g_cacheBrake);
 }
 
 static void pushRemain() {
@@ -180,28 +185,23 @@ static void forcePushRemainProgress() {
   g_cacheProgress = p;
 }
 
-static void pushSpeedRpm() {
+static void pushSpeed() {
   dwinWriteU16IfChanged(VP_SPEED, g_plant.speedCms, g_cacheSpeed);
-  dwinWriteU16IfChanged(VP_RPM, g_plant.rpm, g_cacheRpm);
 }
 
 static void forceSpeedZero() {
   g_plant.speedCms = 0;
-  g_plant.rpm = 0;
-  g_rpmEma = 0;
   g_speedEma = 0;
-  if (g_speedShown || g_cacheSpeed != 0 || g_cacheRpm != 0) {
+  if (g_speedShown || g_cacheSpeed != 0) {
     dwinWriteU16(VP_SPEED, 0);
-    dwinWriteU16(VP_RPM, 0);
     g_cacheSpeed = 0;
-    g_cacheRpm = 0;
     g_speedShown = false;
   }
 }
 
 static void pushMotion() {
   pushTravel();
-  pushSpeedRpm();
+  pushSpeed();
 }
 
 static void pushTarget() {
@@ -216,7 +216,7 @@ static void pushAll() {
 
 void fsmPushPlant() { pushAll(); }
 void fsmPushTarget() {
-  if (g_q == FsmState::Keypad) return;
+  if (g_q == FsmState::Keypad || g_q == FsmState::Settings) return;
   if (g_tgtGate != TargetGate::Normal) return;
   dwinRequestReadU32(VP_TARGET);
 }
@@ -260,8 +260,6 @@ static void actDismissError() {
   g_err = FsmError::None;
   g_chAEdges = 0;
   g_chBEdges = 0;
-  g_chALiveWin = 0;
-  g_chBLiveWin = 0;
   g_chASeen = false;
   g_chBSeen = false;
   g_chHaveLevel = false;
@@ -270,12 +268,14 @@ static void actDismissError() {
   dwinSetPage(PAGE_MAIN);
   delay(20);
   forcePushRemainProgress();
-  pushSpeedRpm();
+  pushSpeed();
 }
 
 static void channelReset(uint32_t nowMs) {
   uint8_t a = 0, b = 0;
   encTim2ReadAb(a, b);
+  bool capA = false, capB = false;
+  encTim2TakeCaptureEdges(capA, capB);  // clear stale CCxIF
   g_chALevel = a;
   g_chBLevel = b;
   g_chHaveLevel = true;
@@ -283,71 +283,79 @@ static void channelReset(uint32_t nowMs) {
   g_chBEdgeMs = nowMs;
   g_chAEdges = 0;
   g_chBEdges = 0;
-  g_chALiveWin = 0;
-  g_chBLiveWin = 0;
   g_chASeen = false;
   g_chBSeen = false;
 }
 
 /**
- * Обрыв A/B: оба канала уже «доказали жизнь» в этом Run,
- * один молчит ≥ ENC_CH_DEAD_MS, второй за окно дал ≥ ENC_CH_LIVE_MIN фронтов.
- * Движение: недавний TIM **или** фронт на любом канале (обрыв A → CNT стоит).
- * Сэмпл — GPIO IDR через encTim2ReadAb.
+ * Обрыв A/B → стр. 15.
+ * Фронты: TIM CC1IF/CC2IF (без пропуска между опросами) + смена IDR.
+ * После prove-alive: один молчит ≥ DEAD_MS, второй дал фронт недавно.
+ * Если при живом TIM один канал так и не ожил — тоже обрыв.
  */
 static bool channelPollFault(uint32_t nowMs) {
   if ((int32_t)(nowMs - g_runStartMs) < (int32_t)ENC_CH_ARM_MS) return false;
 
   uint8_t a = 0, b = 0;
   encTim2ReadAb(a, b);
+  bool capA = false, capB = false;
+  encTim2TakeCaptureEdges(capA, capB);
+
   if (!g_chHaveLevel) {
     channelReset(nowMs);
     return false;
   }
 
-  if (a != g_chALevel) {
-    g_chALevel = a;
+  const bool edgeA = capA || (a != g_chALevel);
+  const bool edgeB = capB || (b != g_chBLevel);
+  g_chALevel = a;
+  g_chBLevel = b;
+
+  if (edgeA) {
     g_chAEdgeMs = nowMs;
     if (g_chAEdges < 255) g_chAEdges++;
-    if (g_chALiveWin < 255) g_chALiveWin++;
     if (g_chAEdges >= ENC_CH_MIN_EDGES) g_chASeen = true;
   }
-  if (b != g_chBLevel) {
-    g_chBLevel = b;
+  if (edgeB) {
     g_chBEdgeMs = nowMs;
     if (g_chBEdges < 255) g_chBEdges++;
-    if (g_chBLiveWin < 255) g_chBLiveWin++;
     if (g_chBEdges >= ENC_CH_MIN_EDGES) g_chBSeen = true;
   }
-
-  if (!g_chASeen || !g_chBSeen) return false;
 
   const int32_t ageA = (int32_t)(nowMs - g_chAEdgeMs);
   const int32_t ageB = (int32_t)(nowMs - g_chBEdgeMs);
   const int32_t sinceTim = (int32_t)(nowMs - g_lastPulseMs);
-  const bool moving = (sinceTim <= (int32_t)ENC_CH_MOTION_MS) ||
-                      (ageA <= (int32_t)ENC_CH_MOTION_MS) ||
-                      (ageB <= (int32_t)ENC_CH_MOTION_MS);
-  if (!moving) return false;
+  const bool timLive = sinceTim <= (int32_t)ENC_CH_MOTION_MS;
+  const bool pinLive = ageA <= (int32_t)ENC_CH_MOTION_MS ||
+                       ageB <= (int32_t)ENC_CH_MOTION_MS;
+  if (!timLive && !pinLive) return false;
 
-  // Оба живы — сбросить окна «односторонней» активности.
-  if (ageA < (int32_t)ENC_CH_DEAD_MS && ageB < (int32_t)ENC_CH_DEAD_MS) {
-    g_chALiveWin = 0;
-    g_chBLiveWin = 0;
-    return false;
+  // Оба уже работали в этом Run — классическая асимметрия.
+  if (g_chASeen && g_chBSeen) {
+    if (ageB >= (int32_t)ENC_CH_DEAD_MS &&
+        ageA <= (int32_t)ENC_CH_MOTION_MS) {
+      return true;
+    }
+    if (ageA >= (int32_t)ENC_CH_DEAD_MS &&
+        ageB <= (int32_t)ENC_CH_MOTION_MS) {
+      return true;
+    }
   }
 
-  const int32_t fresh = (int32_t)(ENC_CH_DEAD_MS / 4u);
-  // B мёртв, A крутится
-  if (ageB >= (int32_t)ENC_CH_DEAD_MS && ageA < fresh &&
-      g_chALiveWin >= ENC_CH_LIVE_MIN) {
-    return true;
+  // Канал молчал с начала Run, а второй + TIM уже давно живые.
+  const int32_t runAge = (int32_t)(nowMs - g_runStartMs);
+  if (runAge >= (int32_t)(ENC_CH_ARM_MS + ENC_CH_DEAD_MS)) {
+    if (g_chASeen && !g_chBSeen && timLive &&
+        ageA <= (int32_t)ENC_CH_MOTION_MS) {
+      return true;
+    }
+    if (g_chBSeen && !g_chASeen &&
+        ageB <= (int32_t)ENC_CH_MOTION_MS) {
+      // A мёртв с старта: TIM mode2 тоже молчит — хватает живого B.
+      return true;
+    }
   }
-  // A мёртв, B крутится
-  if (ageA >= (int32_t)ENC_CH_DEAD_MS && ageB < fresh &&
-      g_chBLiveWin >= ENC_CH_LIVE_MIN) {
-    return true;
-  }
+
   return false;
 }
 
@@ -355,12 +363,10 @@ static void actClearPlant() {
   g_plant.targetM = 0;
   g_plant.travelM = 0;
   g_plant.speedCms = 0;
-  g_plant.rpm = 0;
   g_plant.progressPct = 0;
   g_plant.kbBuf = 0;
   g_plant.kbFresh = true;
   encoderClear();
-  g_rpmEma = 0;
   g_speedEma = 0;
   g_speedShown = true;
   forceSpeedZero();
@@ -376,7 +382,6 @@ static void actClearPlant() {
   g_cacheRemain = 0;
   g_cacheProgress = 0;
   g_cacheSpeed = 0;
-  g_cacheRpm = 0;
 
   for (uint8_t i = 0; i < 4; ++i) {
     digitalWrite(PIN_LED, (i & 1u) ? LOW : HIGH);
@@ -451,7 +456,7 @@ static void actKbCommit() {
   dwinWriteU32(VP_TARGET, g_plant.targetM);
   g_cacheTarget = g_plant.targetM;
   forcePushRemainProgress();
-  pushSpeedRpm();
+  pushSpeed();
 }
 
 static void actKbCancel() {
@@ -463,7 +468,66 @@ static void actKbCancel() {
   dwinWriteU32(VP_TARGET, g_plant.targetM);
   g_cacheTarget = g_plant.targetM;
   forcePushRemainProgress();
-  pushSpeedRpm();
+  pushSpeed();
+}
+
+static void actSettingsOpen() {
+  forceSpeedZero();
+  g_plant.brakeBuf = g_plant.brakeM;
+  g_plant.brakeFresh = true;
+  // Pic_Next=16 already switches page in touch; UART setPage can fight DGUS
+  // compositing on some panels ("settings under main"). Only sync if needed.
+  delay(30);
+  dwinSetPage(PAGE_SETTINGS);
+  g_cacheBrake = 0xFFFFFFFFu;
+  pushBrake();
+}
+
+static void actSettingsBack() {
+  dwinSetPage(PAGE_MAIN);
+  delay(20);
+  dwinSetPage(PAGE_MAIN);
+  invalidateCaches();
+  dwinWriteU32(VP_TARGET, g_plant.targetM);
+  g_cacheTarget = g_plant.targetM;
+  forcePushRemainProgress();
+  pushSpeed();
+}
+
+static void actBrakeDigit(uint8_t d) {
+  if (d > 9) return;
+  if (g_plant.brakeFresh) {
+    g_plant.brakeBuf = 0;
+    g_plant.brakeFresh = false;
+  }
+  const uint32_t next = g_plant.brakeBuf * 10u + d;
+  if (next > MAX_METERS) return;
+  g_plant.brakeBuf = next;
+  pushBrake();
+}
+
+static void actBrakeDel() {
+  if (g_plant.brakeFresh) {
+    g_plant.brakeBuf = 0;
+    g_plant.brakeFresh = false;
+  } else {
+    g_plant.brakeBuf /= 10u;
+  }
+  pushBrake();
+}
+
+static void actBrakeCommit() {
+  if (g_plant.brakeBuf > MAX_METERS) g_plant.brakeBuf = MAX_METERS;
+  g_plant.brakeM = g_plant.brakeBuf;
+  g_plant.brakeFresh = true;
+  // Value stored only — braking motion logic not wired yet.
+  actSettingsBack();
+}
+
+static void actBrakeCancel() {
+  g_plant.brakeBuf = g_plant.brakeM;
+  g_plant.brakeFresh = true;
+  actSettingsBack();
 }
 
 static void actTargetClamp() {
@@ -471,18 +535,20 @@ static void actTargetClamp() {
   forcePushRemainProgress();
 }
 
-static FsmState tryStartRun() {
-  if (g_plant.targetM == 0) {
-    actShowError(FsmError::NoTarget);
-    return FsmState::Error;
-  }
+/** Enter Run after operator starts the shaft (first encoder pulses). */
+static bool tryArmRunFromMotion() {
+  if (g_plant.targetM == 0) return false;
+  if (g_plant.travelM >= targetCm()) return false;
+  const uint8_t pendingRev = g_reverseHit;
   actPrepareRun();
-  return FsmState::Run;
+  if (pendingRev) g_reverseHit = 1;
+  g_q = FsmState::Run;
+  return true;
 }
 
 void fsmDispatch(const FsmEventData& ev) {
-  // Ошибки датчика — из любого режима (кроме уже на экране ошибки).
-  if (g_q != FsmState::Error) {
+  // Ошибки датчика — только в Run (вал уже крутится).
+  if (g_q == FsmState::Run) {
     if (ev.type == FsmEvent::ReverseDetect) {
       actShowError(FsmError::Reverse);
       g_q = FsmState::Error;
@@ -505,9 +571,18 @@ void fsmDispatch(const FsmEventData& ev) {
     }
   }
 
+    // If panel already jumped to page 16 (Pic_Next) but MCU still Idle/Stopped,
+    // brake keys must enter Settings instead of opening ЗАДАНО keypad.
+    if (ev.fromBrake && g_q != FsmState::Settings && g_q != FsmState::Error) {
+      actSettingsOpen();
+      g_q = FsmState::Settings;
+    }
+
   const bool isKb = ev.type == FsmEvent::KbDigit || ev.type == FsmEvent::KbDel ||
                     ev.type == FsmEvent::KbOk || ev.type == FsmEvent::KbCancel;
-  if (isKb && g_q != FsmState::Keypad && g_q != FsmState::Error) {
+  // Brake keys on page 16 must not open ЗАДАНО keypad.
+  if (isKb && !ev.fromBrake && g_q != FsmState::Keypad && g_q != FsmState::Error &&
+      g_q != FsmState::Settings) {
     actKbOpen();
     g_q = FsmState::Keypad;
   }
@@ -518,9 +593,6 @@ void fsmDispatch(const FsmEventData& ev) {
   switch (q) {
     case FsmState::Idle:
       switch (ev.type) {
-        case FsmEvent::Start:
-          qn = tryStartRun();
-          break;
         case FsmEvent::Stop:
           actFreezeSpeed();
           qn = FsmState::Stopped;
@@ -532,6 +604,10 @@ void fsmDispatch(const FsmEventData& ev) {
         case FsmEvent::KbOpen:
           actKbOpen();
           qn = FsmState::Keypad;
+          break;
+        case FsmEvent::SettingsOpen:
+          actSettingsOpen();
+          qn = FsmState::Settings;
           break;
         default:
           break;
@@ -560,9 +636,9 @@ void fsmDispatch(const FsmEventData& ev) {
           actKbOpen();
           qn = FsmState::Keypad;
           break;
-        case FsmEvent::Start:
-          actKbCommit();
-          qn = tryStartRun();
+        case FsmEvent::SettingsOpen:
+          actSettingsOpen();
+          qn = FsmState::Settings;
           break;
         case FsmEvent::Stop:
           actFreezeSpeed();
@@ -579,9 +655,6 @@ void fsmDispatch(const FsmEventData& ev) {
 
     case FsmState::Run:
       switch (ev.type) {
-        case FsmEvent::Start:
-          qn = tryStartRun();
-          break;
         case FsmEvent::Stop:
         case FsmEvent::TargetDone:
           if (ev.type == FsmEvent::TargetDone) actTargetClamp();
@@ -596,6 +669,11 @@ void fsmDispatch(const FsmEventData& ev) {
           actKbOpen();
           qn = FsmState::Keypad;
           break;
+        case FsmEvent::SettingsOpen:
+          actFreezeSpeed();
+          actSettingsOpen();
+          qn = FsmState::Settings;
+          break;
         default:
           break;
       }
@@ -603,9 +681,6 @@ void fsmDispatch(const FsmEventData& ev) {
 
     case FsmState::Stopped:
       switch (ev.type) {
-        case FsmEvent::Start:
-          qn = tryStartRun();
-          break;
         case FsmEvent::Stop:
           actFreezeSpeed();
           qn = FsmState::Stopped;
@@ -618,6 +693,10 @@ void fsmDispatch(const FsmEventData& ev) {
           actKbOpen();
           qn = FsmState::Keypad;
           break;
+        case FsmEvent::SettingsOpen:
+          actSettingsOpen();
+          qn = FsmState::Settings;
+          break;
         default:
           break;
       }
@@ -626,7 +705,6 @@ void fsmDispatch(const FsmEventData& ev) {
     case FsmState::Error:
       switch (ev.type) {
         case FsmEvent::ErrAck:
-        case FsmEvent::Start:
           actDismissError();
           qn = FsmState::Idle;
           break;
@@ -643,6 +721,43 @@ void fsmDispatch(const FsmEventData& ev) {
           break;
       }
       break;
+
+    case FsmState::Settings:
+      switch (ev.type) {
+        case FsmEvent::KbDigit:
+          actBrakeDigit(ev.digit);
+          qn = FsmState::Settings;
+          break;
+        case FsmEvent::KbDel:
+          actBrakeDel();
+          qn = FsmState::Settings;
+          break;
+        case FsmEvent::KbOk:
+          actBrakeCommit();
+          qn = FsmState::Idle;
+          break;
+        case FsmEvent::KbCancel:
+        case FsmEvent::SettingsBack:
+          actBrakeCancel();
+          qn = FsmState::Idle;
+          break;
+        case FsmEvent::Stop:
+          actBrakeCancel();
+          actKbCancel();
+          qn = FsmState::Idle;
+          break;
+        case FsmEvent::Reset:
+          actClearPlant();
+          actKbCancel();
+          qn = FsmState::Idle;
+          break;
+        case FsmEvent::SettingsOpen:
+          qn = FsmState::Settings;
+          break;
+        default:
+          break;
+      }
+      break;
   }
 
   g_q = qn;
@@ -650,25 +765,40 @@ void fsmDispatch(const FsmEventData& ev) {
 
 static bool mapVpToEvent(uint16_t vp, FsmEventData& ev) {
   ev.digit = 0;
+  ev.fromBrake = false;
   switch (vp) {
-    case VP_START: ev.type = FsmEvent::Start; return true;
     case VP_STOP: ev.type = FsmEvent::Stop; return true;
     case VP_RESET: ev.type = FsmEvent::Reset; return true;
     case VP_ERR_ACK: ev.type = FsmEvent::ErrAck; return true;
+    case VP_SETTINGS: ev.type = FsmEvent::SettingsOpen; return true;
+    case VP_SETTINGS_BACK: ev.type = FsmEvent::SettingsBack; return true;
     case VP_KB_OPEN: ev.type = FsmEvent::KbOpen; return true;
     case VP_KB_OK: ev.type = FsmEvent::KbOk; return true;
+    case VP_BRK_OK: ev.type = FsmEvent::KbOk; ev.fromBrake = true; return true;
     case VP_KB_CANCEL: ev.type = FsmEvent::KbCancel; return true;
+    case VP_BRK_CANCEL: ev.type = FsmEvent::KbCancel; ev.fromBrake = true; return true;
     case VP_KB_DEL: ev.type = FsmEvent::KbDel; return true;
+    case VP_BRK_DEL: ev.type = FsmEvent::KbDel; ev.fromBrake = true; return true;
     case VP_KB_0: ev.type = FsmEvent::KbDigit; ev.digit = 0; return true;
+    case VP_BRK_0: ev.type = FsmEvent::KbDigit; ev.digit = 0; ev.fromBrake = true; return true;
     case VP_KB_1: ev.type = FsmEvent::KbDigit; ev.digit = 1; return true;
+    case VP_BRK_1: ev.type = FsmEvent::KbDigit; ev.digit = 1; ev.fromBrake = true; return true;
     case VP_KB_2: ev.type = FsmEvent::KbDigit; ev.digit = 2; return true;
+    case VP_BRK_2: ev.type = FsmEvent::KbDigit; ev.digit = 2; ev.fromBrake = true; return true;
     case VP_KB_3: ev.type = FsmEvent::KbDigit; ev.digit = 3; return true;
+    case VP_BRK_3: ev.type = FsmEvent::KbDigit; ev.digit = 3; ev.fromBrake = true; return true;
     case VP_KB_4: ev.type = FsmEvent::KbDigit; ev.digit = 4; return true;
+    case VP_BRK_4: ev.type = FsmEvent::KbDigit; ev.digit = 4; ev.fromBrake = true; return true;
     case VP_KB_5: ev.type = FsmEvent::KbDigit; ev.digit = 5; return true;
+    case VP_BRK_5: ev.type = FsmEvent::KbDigit; ev.digit = 5; ev.fromBrake = true; return true;
     case VP_KB_6: ev.type = FsmEvent::KbDigit; ev.digit = 6; return true;
+    case VP_BRK_6: ev.type = FsmEvent::KbDigit; ev.digit = 6; ev.fromBrake = true; return true;
     case VP_KB_7: ev.type = FsmEvent::KbDigit; ev.digit = 7; return true;
+    case VP_BRK_7: ev.type = FsmEvent::KbDigit; ev.digit = 7; ev.fromBrake = true; return true;
     case VP_KB_8: ev.type = FsmEvent::KbDigit; ev.digit = 8; return true;
+    case VP_BRK_8: ev.type = FsmEvent::KbDigit; ev.digit = 8; ev.fromBrake = true; return true;
     case VP_KB_9: ev.type = FsmEvent::KbDigit; ev.digit = 9; return true;
+    case VP_BRK_9: ev.type = FsmEvent::KbDigit; ev.digit = 9; ev.fromBrake = true; return true;
     default: return false;
   }
 }
@@ -755,10 +885,16 @@ void fsmOnDwinVp(uint16_t vp, uint32_t value) {
     return;
   }
 
-  if ((vp == VP_RESET || vp == VP_ERR_ACK) && value != 0) {
+  if ((vp == VP_RESET || vp == VP_ERR_ACK || vp == VP_SETTINGS) && value != 0) {
     dwinWriteU16(vp, 0);
     FsmEventData ev{};
-    ev.type = (vp == VP_RESET) ? FsmEvent::Reset : FsmEvent::ErrAck;
+    if (vp == VP_RESET) {
+      ev.type = FsmEvent::Reset;
+    } else if (vp == VP_ERR_ACK) {
+      ev.type = FsmEvent::ErrAck;
+    } else {
+      ev.type = FsmEvent::SettingsOpen;
+    }
     ev.digit = 0;
     fsmDispatch(ev);
     return;
@@ -775,7 +911,7 @@ void fsmOnDwinVp(uint16_t vp, uint32_t value) {
 }
 
 void fsmPollButtons(uint32_t nowMs) {
-  static const uint16_t kAlt[] = {VP_START, VP_STOP, VP_ERR_ACK};
+  static const uint16_t kAlt[] = {VP_STOP, VP_ERR_ACK, VP_SETTINGS, VP_SETTINGS_BACK};
   static uint8_t idx = 0;
   static uint32_t tLast = 0;
   static uint32_t tTarget = 0;
@@ -784,7 +920,7 @@ void fsmPollButtons(uint32_t nowMs) {
   if (nowMs - tLast >= BUTTON_POLL_MS) {
     tLast = nowMs;
     dwinRequestReadU16(VP_RESET);
-    dwinRequestReadU16(kAlt[idx % 3u]);
+    dwinRequestReadU16(kAlt[idx % 4u]);
     idx = (uint8_t)(idx + 1u);
   }
 
@@ -805,6 +941,7 @@ void fsmPollButtons(uint32_t nowMs) {
   if (nowMs - tTarget >= TARGET_POLL_MS) {
     tTarget = nowMs;
     if (g_q != FsmState::Keypad && g_q != FsmState::Error &&
+        g_q != FsmState::Settings &&
         g_tgtGate == TargetGate::Normal) {
       dwinRequestReadU32(VP_TARGET);
     }
@@ -819,13 +956,6 @@ void fsmMotionTick(uint32_t nowMs) {
   // Hardware TIM2 → soft path / reverse (no per-pulse ISR).
   encoderPollHw(nowMs);
 
-  uint8_t rev = g_reverseHit;
-  if (rev) g_reverseHit = 0;
-  if (rev) {
-    FsmEventData ev{FsmEvent::ReverseDetect, 0};
-    fsmDispatch(ev);
-  }
-
   if (lastSpeedMs == 0) {
     lastSpeedMs = nowMs;
     lastTravelMs = nowMs;
@@ -838,6 +968,19 @@ void fsmMotionTick(uint32_t nowMs) {
   if (g_q == FsmState::Error) {
     forceSpeedZero();
     return;
+  }
+
+  // ЗАДАНО задано → вал крутят вручную → первый импульс = вход в Run.
+  if ((g_q == FsmState::Idle || g_q == FsmState::Stopped) && g_encActivity) {
+    tryArmRunFromMotion();
+  }
+
+  uint8_t rev = g_reverseHit;
+  if (rev) g_reverseHit = 0;
+  if (rev && g_q == FsmState::Run) {
+    FsmEventData ev{FsmEvent::ReverseDetect, 0};
+    fsmDispatch(ev);
+    if (g_q == FsmState::Error) return;
   }
 
   // Обрыв A/B: IDR PA0/PA1 + асимметрия фронтов при живом TIM.
@@ -881,7 +1024,7 @@ void fsmMotionTick(uint32_t nowMs) {
 
     if (win > 0) g_lastPulseMs = nowMs;
 
-    const bool onKeypad = (g_q == FsmState::Keypad);
+    const bool onKeypad = (g_q == FsmState::Keypad || g_q == FsmState::Settings);
     const bool live = fsmSpeedLive();
     const int32_t sincePulse = (int32_t)(nowMs - g_lastPulseMs);
     const bool idleStop = (sincePulse >= (int32_t)SPEED_IDLE_ZERO_MS);
@@ -889,9 +1032,6 @@ void fsmMotionTick(uint32_t nowMs) {
     if (!live || onKeypad || idleStop) {
       forceSpeedZero();
     } else if (win > 0) {
-      // TIM counts @ ENC_COUNTS_PER_REV per shaft revolution
-      const uint32_t rpmInst = (uint32_t)((win * 60000000ULL) /
-                                          ((uint64_t)ENC_COUNTS_PER_REV * (uint64_t)dtUs));
       const uint32_t speedInst =
           (uint32_t)((win * (uint64_t)NM_PER_COUNT) / ((uint64_t)dtUs * 10ULL));
 
@@ -910,14 +1050,12 @@ void fsmMotionTick(uint32_t nowMs) {
         }
       }
 
-      g_rpmEma = (rpmInst + (uint32_t)(SPEED_EMA_N - 1u) * g_rpmEma) / SPEED_EMA_N;
       g_speedEma =
           (speedInst + (uint32_t)(SPEED_EMA_N - 1u) * g_speedEma) / SPEED_EMA_N;
 
-      g_plant.rpm = (uint16_t)min(g_rpmEma, (uint32_t)MAX_RPM);
       g_plant.speedCms = (uint16_t)min(g_speedEma, (uint32_t)MAX_SPEED_CMS);
       g_speedShown = true;
-      pushSpeedRpm();
+      pushSpeed();
     }
   }
 
@@ -925,7 +1063,7 @@ void fsmMotionTick(uint32_t nowMs) {
     lastTravelMs = nowMs;
 
     g_plant.travelM = nmToTravelCm(g_nm);
-    if (g_q != FsmState::Keypad) pushTravel();
+    if (g_q != FsmState::Keypad && g_q != FsmState::Settings) pushTravel();
 
     if (g_q == FsmState::Run && g_plant.targetM > 0 &&
         g_plant.travelM >= targetCm()) {
@@ -942,10 +1080,11 @@ void fsmBegin() {
   invalidateCaches();
   g_plant = {};
   g_plant.kbFresh = true;
+  g_plant.brakeFresh = true;
   encoderClear();
   forceSpeedZero();
   writeAllDisplayZeros();
   g_cacheTarget = g_cacheRemain = 0;
-  g_cacheProgress = g_cacheSpeed = g_cacheRpm = 0;
+  g_cacheProgress = g_cacheSpeed = 0;
   dwinSetPage(PAGE_MAIN);
 }

@@ -57,6 +57,9 @@ static constexpr uint16_t VP_STOP = 0x6051;
 static constexpr uint16_t VP_RESET = 0x6052;
 static constexpr uint16_t VP_KB_OPEN = 0x6053;
 static constexpr uint16_t VP_ERR_ACK = 0x6054;
+static constexpr uint16_t VP_SETTINGS = 0x6055;
+static constexpr uint16_t VP_SETTINGS_BACK = 0x6056;  // legacy unused
+static constexpr uint16_t VP_BRAKE = 0x6090;
 
 static constexpr uint16_t VP_KB_BUF = 0x6080;
 static constexpr uint16_t VP_KB_1 = 0x60A1;
@@ -73,6 +76,20 @@ static constexpr uint16_t VP_KB_DEL = 0x60AB;
 static constexpr uint16_t VP_KB_OK = 0x60AC;
 static constexpr uint16_t VP_KB_CANCEL = 0x60AD;
 
+static constexpr uint16_t VP_BRK_1 = 0x60B1;
+static constexpr uint16_t VP_BRK_2 = 0x60B2;
+static constexpr uint16_t VP_BRK_3 = 0x60B3;
+static constexpr uint16_t VP_BRK_4 = 0x60B4;
+static constexpr uint16_t VP_BRK_5 = 0x60B5;
+static constexpr uint16_t VP_BRK_6 = 0x60B6;
+static constexpr uint16_t VP_BRK_7 = 0x60B7;
+static constexpr uint16_t VP_BRK_8 = 0x60B8;
+static constexpr uint16_t VP_BRK_9 = 0x60B9;
+static constexpr uint16_t VP_BRK_0 = 0x60BA;
+static constexpr uint16_t VP_BRK_DEL = 0x60BB;
+static constexpr uint16_t VP_BRK_OK = 0x60BC;
+static constexpr uint16_t VP_BRK_CANCEL = 0x60BD;
+
 static constexpr uint16_t PAGE_MAIN = 0;
 static constexpr uint16_t PAGE_KEYPAD = 10;
 static constexpr uint16_t PAGE_ERR_REVERSE = 11;
@@ -80,6 +97,7 @@ static constexpr uint16_t PAGE_ERR_NO_ENC = 12;
 static constexpr uint16_t PAGE_ERR_NO_TARGET = 13;
 static constexpr uint16_t PAGE_ERR_SPEED_JUMP = 14;
 static constexpr uint16_t PAGE_ERR_CHANNEL = 15;
+static constexpr uint16_t PAGE_SETTINGS = 16;
 // Legacy alias
 static constexpr uint16_t PAGE_ERROR = PAGE_ERR_REVERSE;
 

@@ -31,7 +31,8 @@ void encTim2Begin() {
   // IC1=TI1, IC2=TI2 + digital filter (less noise → fewer false reverses)
   TIM2->CCMR1 = TIM_CCMR1_CC1S_0 | TIM_CCMR1_CC2S_0 |
                 (0x6u << TIM_CCMR1_IC1F_Pos) | (0x6u << TIM_CCMR1_IC2F_Pos);
-  TIM2->CCER = 0;  // rising-active inputs (CC1P/CC2P = 0)
+  // Rising-active + enable captures so CC1IF/CC2IF mark A/B edges in encoder mode
+  TIM2->CCER = TIM_CCER_CC1E | TIM_CCER_CC2E;
 
   // Encoder mode 2: count on TI1 (A) edges, direction from TI2 (B)
   // → 2 counts / A-period → 2000 counts / rev @ 1000 P/R
@@ -40,7 +41,7 @@ void encTim2Begin() {
   TIM2->CNT = 0;
   TIM2->EGR = TIM_EGR_UG;
   TIM2->SR = 0;
-  TIM2->DIER = 0;  // no IRQ — poll UIF in encTim2Poll()
+  TIM2->DIER = 0;  // no IRQ — poll UIF / CCxIF in encTim2Poll()
   TIM2->CR1 = TIM_CR1_CEN;
 
   s_lastCnt = 0;
@@ -66,6 +67,14 @@ void encTim2ReadAb(uint8_t& a, uint8_t& b) {
   const uint32_t idr = GPIOA->IDR;
   a = (uint8_t)(idr & 1u);
   b = (uint8_t)((idr >> 1) & 1u);
+}
+
+void encTim2TakeCaptureEdges(bool& edgeA, bool& edgeB) {
+  const uint32_t sr = TIM2->SR;
+  edgeA = (sr & TIM_SR_CC1IF) != 0;
+  edgeB = (sr & TIM_SR_CC2IF) != 0;
+  if (edgeA) TIM2->SR = (uint32_t)~TIM_SR_CC1IF;
+  if (edgeB) TIM2->SR = (uint32_t)~TIM_SR_CC2IF;
 }
 
 EncTim2Delta encTim2Poll() {

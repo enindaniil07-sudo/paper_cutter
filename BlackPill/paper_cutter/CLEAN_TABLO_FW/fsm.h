@@ -3,7 +3,7 @@
 #include <Arduino.h>
 #include "config.h"
 
-enum class FsmState : uint8_t { Idle = 0, Keypad, Run, Stopped, Error };
+enum class FsmState : uint8_t { Idle = 0, Keypad, Run, Stopped, Error, Settings };
 
 enum class FsmError : uint8_t {
   None = 0,
@@ -29,11 +29,14 @@ enum class FsmEvent : uint8_t {
   SpeedJumpDetect,
   ChannelFaultDetect,
   ErrAck,
+  SettingsOpen,
+  SettingsBack,
 };
 
 struct FsmEventData {
   FsmEvent type;
   uint8_t digit;
+  bool fromBrake;  // page-16 brake keypad (not ЗАДАНО)
 };
 
 struct PlantData {
@@ -44,6 +47,9 @@ struct PlantData {
   uint16_t progressPct;  // 0..100
   uint32_t kbBuf;
   bool kbFresh;
+  uint32_t brakeM;       // расстояние торможения, м (UI only for now)
+  uint32_t brakeBuf;
+  bool brakeFresh;
 };
 
 void fsmBegin();
