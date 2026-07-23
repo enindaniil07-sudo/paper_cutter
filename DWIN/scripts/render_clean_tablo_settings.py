@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""CLEAN_TABLO page 16 — ввод расстояния торможения (UI only)."""
+"""CLEAN_TABLO page 16 (settings list) + page 17 (edit keypad)."""
 from __future__ import annotations
 
 import argparse
@@ -36,51 +36,112 @@ def _sync(src: Path, dst: Path) -> None:
     os.replace(tmp, dst)
 
 
-def render(w: int, h: int, layout: dict) -> Image.Image:
+def render_settings(w: int, h: int, layout: dict) -> Image.Image:
     c = layout["controls"]
     im = Image.new("RGB", (w, h), (16, 20, 28))
     dr = ImageDraw.Draw(im)
 
-    # Title window
-    lb = c["brake_label"]
-    dr.rounded_rectangle(_box(lb), radius=14, fill=(32, 36, 48), outline=AMBER, width=2)
-    title = "РАССТОЯНИЕ ТОРМОЖЕНИЯ"
-    f_t = font(20, True)
-    tw = dr.textlength(title, font=f_t) if hasattr(dr, "textlength") else 280
+    title = c["settings_title"]
+    dr.rounded_rectangle(_box(title), radius=14, fill=(32, 36, 48), outline=AMBER, width=2)
+    f_t = font(22, True)
+    t = "НАСТРОЙКИ"
+    tw = dr.textlength(t, font=f_t) if hasattr(dr, "textlength") else 140
     dr.text(
-        (lb["x"] + (lb["w"] - tw) / 2, lb["y"] + (lb["h"] - 22) / 2 - 1),
-        title,
+        (title["x"] + (title["w"] - tw) / 2, title["y"] + (title["h"] - 24) / 2 - 1),
+        t,
         fill=(255, 210, 154),
         font=f_t,
     )
-    # unit hint on the right of label
-    f_u = font(14, True)
-    unit = "м"
-    uw = dr.textlength(unit, font=f_u) if hasattr(dr, "textlength") else 12
-    dr.text(
-        (lb["x"] + lb["w"] - 28 - uw, lb["y"] + (lb["h"] - 16) / 2),
-        unit,
-        fill=(160, 170, 185),
-        font=f_u,
-    )
 
-    # Digit window directly under title
-    disp = c["brake_display"]
+    back = c["btn_settings_back"]
+    dr.rounded_rectangle(_box(back), radius=14, fill=(90, 42, 50), outline=(230, 120, 130), width=2)
+    f_b = font(18, True)
+    _center(dr, back, "НАЗАД", f_b, (255, 220, 225))
+
+    rows = [
+        (
+            "set_row_brake",
+            "set_val_brake",
+            "РАССТОЯНИЕ ТОРМОЖЕНИЯ",
+            "с какого остатка включается ШИМ",
+            "м",
+        ),
+        (
+            "set_row_on",
+            "set_val_on",
+            "ВРЕМЯ ТОРМОЗ (1)",
+            "длительность импульса «тормоз»",
+            "мс",
+        ),
+        (
+            "set_row_off",
+            "set_val_off",
+            "ВРЕМЯ ОТПУСК (0)",
+            "длительность импульса «отпуск»",
+            "мс",
+        ),
+        (
+            "set_row_spd",
+            "set_val_spd",
+            "ОГРАНИЧЕНИЕ СКОРОСТИ",
+            "ввод: 125 = 1.25 м/с",
+            "м/с",
+        ),
+    ]
+    f_h = font(18, True)
+    f_s = font(13, False)
+    f_u = font(14, True)
+    for row_k, val_k, head, sub, unit in rows:
+        row = c[row_k]
+        val = c[val_k]
+        dr.rounded_rectangle(_box(row), radius=14, fill=(28, 32, 42), outline=AMBER, width=2)
+        dr.text((row["x"] + 16, row["y"] + 12), head, fill=(255, 220, 180), font=f_h)
+        dr.text((row["x"] + 16, row["y"] + 42), sub, fill=(150, 160, 175), font=f_s)
+        dr.rounded_rectangle(_box(val), radius=10, fill=(0, 0, 0), outline=(120, 140, 160), width=2)
+        uw = dr.textlength(unit, font=f_u) if hasattr(dr, "textlength") else 20
+        # Unit to the right of the value box so VarInput digits stay clear
+        dr.text(
+            (val["x"] + val["w"] + 8, val["y"] + (val["h"] - 16) / 2),
+            unit,
+            fill=(160, 170, 185),
+            font=f_u,
+        )
+        _ = uw
+    return im
+
+
+def render_edit(w: int, h: int, layout: dict) -> Image.Image:
+    c = layout["controls"]
+    im = Image.new("RGB", (w, h), (16, 20, 28))
+    dr = ImageDraw.Draw(im)
+
+    disp = c["set_edit_display"]
     dr.rounded_rectangle(_box(disp), radius=14, fill=(0, 0, 0), outline=AMBER, width=2)
+    f_hint = font(16, True)
+    hint = "ВВОД ЗНАЧЕНИЯ"
+    hw = dr.textlength(hint, font=f_hint) if hasattr(dr, "textlength") else 160
+    dr.text(
+        (disp["x"] + 20, disp["y"] + 12),
+        hint,
+        fill=(160, 170, 185),
+        font=f_hint,
+    )
+    # keep right side free for VarInput digits
+    _ = hw
 
     keys = [
-        ("1", "brk_1", "num"),
-        ("2", "brk_2", "num"),
-        ("3", "brk_3", "num"),
-        ("4", "brk_4", "num"),
-        ("5", "brk_5", "num"),
-        ("6", "brk_6", "num"),
-        ("7", "brk_7", "num"),
-        ("8", "brk_8", "num"),
-        ("9", "brk_9", "num"),
-        ("DEL", "brk_del", "del"),
-        ("0", "brk_0", "num"),
-        ("OK", "brk_ok", "ok"),
+        ("1", "set_edit_1", "num"),
+        ("2", "set_edit_2", "num"),
+        ("3", "set_edit_3", "num"),
+        ("4", "set_edit_4", "num"),
+        ("5", "set_edit_5", "num"),
+        ("6", "set_edit_6", "num"),
+        ("7", "set_edit_7", "num"),
+        ("8", "set_edit_8", "num"),
+        ("9", "set_edit_9", "num"),
+        ("DEL", "set_edit_del", "del"),
+        ("0", "set_edit_0", "num"),
+        ("OK", "set_edit_ok", "ok"),
     ]
     f_k = font(30, True)
     f_del = font(22, True)
@@ -95,7 +156,7 @@ def render(w: int, h: int, layout: dict) -> Image.Image:
         dr.rounded_rectangle(_box(box), radius=14, fill=fill, outline=outline, width=2)
         _center(dr, box, label, f_del if kind == "del" else f_k, ink)
 
-    cc = c["brk_cancel"]
+    cc = c["set_edit_cancel"]
     dr.rounded_rectangle(_box(cc), radius=14, fill=(90, 42, 50), outline=(230, 120, 130), width=2)
     f_c = font(18, True)
     tw = dr.textlength("ОТМЕНА", font=f_c) if hasattr(dr, "textlength") else 70
@@ -117,13 +178,23 @@ def main() -> int:
     w, h = int(layout["screen"]["width"]), int(layout["screen"]["height"])
     out = root / "image"
     out.mkdir(parents=True, exist_ok=True)
-    path = out / "16.bmp"
-    render(w, h, layout).save(path)
-    _sync(path, root / "DWIN_SET" / "16.bmp")
-    _sync(path, root / "16.bmp")
     (root / "source").mkdir(parents=True, exist_ok=True)
-    render(w, h, layout).save(root / "source" / "page16_brake.png")
-    print("Wrote", path)
+
+    p16 = render_settings(w, h, layout)
+    path16 = out / "16.bmp"
+    p16.save(path16)
+    _sync(path16, root / "DWIN_SET" / "16.bmp")
+    _sync(path16, root / "16.bmp")
+    p16.save(root / "source" / "page16_settings.png")
+
+    p17 = render_edit(w, h, layout)
+    path17 = out / "17.bmp"
+    p17.save(path17)
+    _sync(path17, root / "DWIN_SET" / "17.bmp")
+    _sync(path17, root / "17.bmp")
+    p17.save(root / "source" / "page17_settings_edit.png")
+
+    print("Wrote", path16, "and", path17)
     return 0
 
 

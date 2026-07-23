@@ -3,8 +3,9 @@
 CLEAN_TABLO 13TouchFile.bin
 
 Page 0: RESET/STOP + gear→16 + Variable Data Input VP 6000 (keyboard page 10)
-Page 10: ASCII keys for VarInput
-Page 16: braking-distance BitButtons (MCU VP 60B1–60BD)
+Page 10: ASCII keys for VarInput (ЗАДАНО)
+Page 16: settings list — 4× VarInput (keyboard page 17) + НАЗАД→0
+Page 17: ASCII keys for settings VarInput
 """
 from __future__ import annotations
 
@@ -15,6 +16,7 @@ from pathlib import Path
 
 PAGE_KB = 10
 PAGE_SET = 16
+PAGE_EDIT = 17
 
 
 def pack_bit_button(page: int, c: dict, vp: int, pic_on: int, pic_next: int) -> bytes:
@@ -39,31 +41,35 @@ def pack_bit_button(page: int, c: dict, vp: int, pic_on: int, pic_next: int) -> 
     rec[16] = 0xFE
     struct.pack_into(">H", rec, 17, vp & 0xFFFF)
     rec[19] = 0  # Bit_Pos
-    # Adj_Mode 3 = inching: press→1 + UART upload, release→0
-    rec[20] = 3
+    rec[20] = 3  # Adj_Mode inching
     return bytes(rec)
 
 
-def pack_var_input_zado(touch: dict, disp: dict) -> bytes:
-    """Variable Data Input → VP 6000, long (4-byte), 5 digits, max 99999.
-
-    Cursor is placed inside the keypad page digit window (kb_display), not the
-    main-page ЗАДАНО card — otherwise tall ASCII digits clip the box on page 10.
-    """
+def pack_var_input(
+    page: int,
+    touch: dict,
+    disp: dict,
+    vp: int,
+    *,
+    v_type: int,
+    n_int: int,
+    v_min: int,
+    v_max: int,
+    kb_page: int,
+) -> bytes:
+    """Variable Data Input — shows value + opens ASCII keyboard on kb_page."""
     xs, ys = int(touch["x"]), int(touch["y"])
     xe, ye = xs + int(touch["w"]), ys + int(touch["h"])
-    # DWIN ASCII VarInput with N_Int draws right-aligned toward (cx,cy):
-    # digits grow LEFT from the cursor. Put cx near the RIGHT of kb_display
-    # so the number stays inside the amber rim (not past the left edge).
-    cx = int(disp["x"]) + int(disp["w"]) - 28
-    cy = int(disp["y"]) + 18
+    # Digits grow left from cursor — place near right of value box.
+    cx = int(disp["x"]) + int(disp["w"]) - 36
+    cy = int(disp["y"]) + max(8, (int(disp["h"]) - 28) // 2)
 
     rec = bytearray(64)
     struct.pack_into(
         ">HHHHHHHH",
         rec,
         0,
-        0,
+        page,
         xs,
         ys,
         xe,
@@ -73,35 +79,46 @@ def pack_var_input_zado(touch: dict, disp: dict) -> bytes:
         0xFE00,
     )
     rec[16] = 0xFE
-    struct.pack_into(">H", rec, 17, 0x6000)  # VP ЗАДАНО
-    # V_Type 0 = signed int16 (−32768…32767). V_Type 1 = long → до 99999.
-    rec[19] = 0x01
-    rec[20] = 5  # N_Int — пять цифр (макс. 99999)
+    struct.pack_into(">H", rec, 17, vp & 0xFFFF)
+    rec[19] = v_type & 0xFF  # 0=int16, 1=long
+    rec[20] = n_int & 0xFF
     rec[21] = 0  # N_Dot
     struct.pack_into(">HH", rec, 22, cx & 0xFFFF, cy & 0xFFFF)
     struct.pack_into(">H", rec, 26, 0xFFFF)  # color
     rec[28] = 0  # Lib ASCII
     rec[29] = 24  # font
     rec[30] = 0xF8  # cursor color
-    rec[31] = 1  # show digits (not stars)
+    rec[31] = 1  # show digits
     rec[32] = 0xFE
     rec[33] = 1  # KB_Source = other page
-    struct.pack_into(">H", rec, 34, PAGE_KB)  # Pic_KB = 10
-    # Keyboard covers page 10
+    struct.pack_into(">H", rec, 34, kb_page & 0xFFFF)
     struct.pack_into(">HHHH", rec, 36, 0, 0, 799, 479)
-    struct.pack_into(">HH", rec, 44, 0, 0)  # KB position on current page
+    struct.pack_into(">HH", rec, 44, 0, 0)
     rec[48] = 0xFE
     rec[49] = 0xFF  # limits on
-    struct.pack_into(">II", rec, 50, 0, 99999)  # V_min…V_max (макс. 5 цифр)
-    rec[58] = 0  # Return_Set off
-    struct.pack_into(">H", rec, 59, 0)  # Return_VP
-    struct.pack_into(">H", rec, 61, 0)  # Return_DATA
-    rec[63] = 0  # Layer_Gama opaque
+    struct.pack_into(">II", rec, 50, v_min & 0xFFFFFFFF, v_max & 0xFFFFFFFF)
+    rec[58] = 0
+    struct.pack_into(">H", rec, 59, 0)
+    struct.pack_into(">H", rec, 61, 0)
+    rec[63] = 0
     return bytes(rec)
 
 
+def pack_var_input_zado(touch: dict, disp: dict) -> bytes:
+    return pack_var_input(
+        0,
+        touch,
+        disp,
+        0x6000,
+        v_type=1,
+        n_int=5,
+        v_min=0,
+        v_max=99999,
+        kb_page=PAGE_KB,
+    )
+
+
 def pack_ascii_key(page: int, c: dict, code: int) -> bytes:
-    """16-byte Return Key Code for VarInput keyboard."""
     xs, ys = int(c["x"]), int(c["y"])
     xe, ye = xs + int(c["w"]), ys + int(c["h"])
     rec = bytearray(16)
@@ -121,7 +138,6 @@ def pack_ascii_key(page: int, c: dict, code: int) -> bytes:
     return bytes(rec)
 
 
-# DGUS keypad codes for Variable Data Input (page 10)
 KB_KEYS = (
     ("kb_1", 0x0031),
     ("kb_2", 0x0032),
@@ -138,21 +154,20 @@ KB_KEYS = (
     ("kb_ok", 0x00F1),
 )
 
-# Page 16 braking-distance keypad → MCU BitButtons (ArtText VP 6090)
-BRK_KEYS = (
-    ("brk_1", 0x60B1),
-    ("brk_2", 0x60B2),
-    ("brk_3", 0x60B3),
-    ("brk_4", 0x60B4),
-    ("brk_5", 0x60B5),
-    ("brk_6", 0x60B6),
-    ("brk_7", 0x60B7),
-    ("brk_8", 0x60B8),
-    ("brk_9", 0x60B9),
-    ("brk_del", 0x60BB),
-    ("brk_0", 0x60BA),
-    ("brk_cancel", 0x60BD),
-    ("brk_ok", 0x60BC),
+SET_EDIT_KEYS = (
+    ("set_edit_1", 0x0031),
+    ("set_edit_2", 0x0032),
+    ("set_edit_3", 0x0033),
+    ("set_edit_4", 0x0034),
+    ("set_edit_5", 0x0035),
+    ("set_edit_6", 0x0036),
+    ("set_edit_7", 0x0037),
+    ("set_edit_8", 0x0038),
+    ("set_edit_9", 0x0039),
+    ("set_edit_del", 0x00F2),
+    ("set_edit_0", 0x0030),
+    ("set_edit_cancel", 0x00F0),
+    ("set_edit_ok", 0x00F1),
 )
 
 
@@ -165,13 +180,10 @@ def main() -> int:
     c = layout["controls"]
 
     out = bytearray()
-    # Page 0: STOP / RESET / gear→16 / ЗАДАНО VarInput→page 10
     out += pack_bit_button(0, c["btn_stop"], 0x6051, 2, -1)
     out += pack_bit_button(0, c["btn_reset"], 0x6052, 1, -1)
     settings = pack_bit_button(0, c["btn_settings"], 0x6055, -1, PAGE_SET)
-    import struct as _st
-
-    _pn = _st.unpack_from(">H", settings, 10)[0]
+    _pn = struct.unpack_from(">H", settings, 10)[0]
     if _pn != PAGE_SET:
         raise SystemExit(f"settings Pic_Next must be {PAGE_SET}, got {_pn:#x}")
     out += settings
@@ -184,16 +196,63 @@ def main() -> int:
     for key, code in KB_KEYS:
         out += pack_ascii_key(PAGE_KB, c[key], code)
 
-    # Page 16: braking distance keypad (MCU ArtText VP 6090)
-    for key, vp in BRK_KEYS:
-        out += pack_bit_button(PAGE_SET, c[key], vp, -1, -1)
+    # Page 16: back + four VarInputs (values shown by panel ASCII)
+    out += pack_bit_button(PAGE_SET, c["btn_settings_back"], 0x6056, -1, 0)
+    out += pack_var_input(
+        PAGE_SET,
+        c["set_row_brake"],
+        c["set_val_brake"],
+        0x6090,
+        v_type=1,
+        n_int=5,
+        v_min=0,
+        v_max=99999,
+        kb_page=PAGE_EDIT,
+    )
+    # 6090 is LONG (4 bytes) → next free VP is 6094
+    out += pack_var_input(
+        PAGE_SET,
+        c["set_row_on"],
+        c["set_val_on"],
+        0x6094,
+        v_type=0,
+        n_int=4,
+        v_min=0,
+        v_max=9999,
+        kb_page=PAGE_EDIT,
+    )
+    out += pack_var_input(
+        PAGE_SET,
+        c["set_row_off"],
+        c["set_val_off"],
+        0x6096,
+        v_type=0,
+        n_int=4,
+        v_min=0,
+        v_max=9999,
+        kb_page=PAGE_EDIT,
+    )
+    out += pack_var_input(
+        PAGE_SET,
+        c["set_row_spd"],
+        c["set_val_spd"],
+        0x6098,
+        v_type=0,
+        n_int=4,
+        v_min=0,
+        v_max=9999,
+        kb_page=PAGE_EDIT,
+    )
+
+    for key, code in SET_EDIT_KEYS:
+        out += pack_ascii_key(PAGE_EDIT, c[key], code)
 
     out += b"\xff\xff"
 
     path = root / "DWIN_SET" / "13TouchFile.bin"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(out)
-    print(f"Wrote {path} ({len(out)} bytes) BitButton+VarInput, page16 brake")
+    print(f"Wrote {path} ({len(out)} bytes) settings VarInput page16->17")
     return 0
 
 

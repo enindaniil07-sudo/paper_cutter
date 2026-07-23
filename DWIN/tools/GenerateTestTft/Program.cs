@@ -1210,27 +1210,12 @@ internal static class Program
         return true;
     }
 
-    /// <summary>CLEAN_TABLO page 16 — braking distance ArtText VP 6090 (LONG32).</summary>
+    /// <summary>CLEAN_TABLO page 16 — values via touch VarInput (no ArtText; keeps show layering).</summary>
     private static bool TryInitCleanTabloSettings(Document doc, int docWidth, int docHeight, ushort spBase, string projectDir)
     {
         ClearAllDrawObjects(doc);
-        var lay = PaperCutterLayoutFile.LoadOrDefault(projectDir);
-        var screen = new Point(docWidth, docHeight);
-        if (lay.Controls == null || !lay.Controls.ContainsKey("brake_display"))
-        {
-            Console.WriteLine("WARNING: layout missing brake_display — page 16 empty");
-            return true;
-        }
-        AppendArtTextShowFormatted(doc, screen, lay.Rect("brake_display"), 0x6090, 0x5190, "Brake_m", 24, 30, 5, 0,
-            PcArtVarTypeLong32, PcArtAlignRight, showLeadingZeros: true, iconHeightPx: 72);
-        foreach (DrawObject o in doc.Items)
-        {
-            if (o is DrawRectangle r && r.ConfigObject is ArtTextShow art && art.Var_Name == "Brake_m")
-                art.Pic_Id = 16;
-        }
-        EnsureArtTextShowF13(doc);
         doc.SetDirtyFlag(true);
-        Console.WriteLine("CLEAN_TABLO settings page 16: ArtText VP6090 LONG32 Pic_Id=16");
+        Console.WriteLine("CLEAN_TABLO settings page 16: empty show (VarInput on touch displays values)");
         return true;
     }
 

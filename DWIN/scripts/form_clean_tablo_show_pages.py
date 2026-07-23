@@ -164,7 +164,8 @@ def main() -> int:
     print("Progress IconShow:")
     ensure_progress_icon(s)
 
-    # Hard rule: page16 stays empty (cnt=0) — DGUS must own settings ArtText
+    # Hard rule: page16 stays empty (cnt=0) — settings values via touch VarInput
+# (adding ArtText here previously broke main/settings layering)
     cnt16, ptr16 = get_entry(s, 16)
     if cnt16 != 0:
         print(f"WARNING: forcing page16 empty (was cnt={cnt16} ptr=0x{ptr16:04X})")

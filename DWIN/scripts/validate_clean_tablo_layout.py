@@ -14,11 +14,20 @@ REQUIRED = (
     "btn_reset",
     "btn_stop",
     "btn_settings",
-    "brake_label",
-    "brake_display",
-    "brk_0",
-    "brk_ok",
-    "brk_cancel",
+    "settings_title",
+    "btn_settings_back",
+    "set_row_brake",
+    "set_val_brake",
+    "set_row_on",
+    "set_val_on",
+    "set_row_off",
+    "set_val_off",
+    "set_row_spd",
+    "set_val_spd",
+    "set_edit_display",
+    "set_edit_0",
+    "set_edit_ok",
+    "set_edit_cancel",
     "kb_display",
     "kb_1",
     "kb_2",
@@ -56,7 +65,7 @@ def main() -> int:
     w, h = data["screen"]["width"], data["screen"]["height"]
     if w != 800 or h != 480:
         print(f"WARNING: expected 800x480, got {w}x{h}")
-    print("OK: CLEAN_TABLO layout valid (main + keypad)")
+    print("OK: CLEAN_TABLO layout valid (main + keypad + settings)")
     return 0
 
 

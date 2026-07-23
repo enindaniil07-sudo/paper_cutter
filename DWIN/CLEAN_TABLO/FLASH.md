@@ -7,11 +7,11 @@ Background ICL slot **32** (`T5LCFG[8]=0x20`).
 | File | Role |
 |------|------|
 | `T5LCFG.CFG` | byte 0x08 = **32** |
-| `13TouchFile.bin` | STOP/RESET/gear + VarInput ЗАДАНО + page16 brake |
-| `14ShowFile.bin` | ArtText стр.0 + стр.16 VP6090 |
+| `13TouchFile.bin` | STOP/RESET/gear + VarInput ЗАДАНО + settings 16→17 |
+| `14ShowFile.bin` | ArtText стр.0 (page16 без ArtText — значения через VarInput) |
 | `22_Config.bin` | нули |
-| `32.icl` | фоны 0,1,2,10–16 |
-| `00.bmp`…`16.bmp` | те же фоны BMP |
+| `32.icl` | фоны 0,1,2,10–17 |
+| `00.bmp`…`17.bmp` | те же фоны BMP |
 | `24/25/26.icl` | цифры / прогресс |
 | `0_DWIN_ASC.HZK` | шрифт |
 
@@ -22,6 +22,6 @@ Background ICL slot **32** (`T5LCFG[8]=0x20`).
 3. Включить → **дождаться конца** загрузки  
 4. Выключить → включить  
 
-MCU: `CLEAN_TABLO_FW` (без СТАРТ; шестерёнка → расстояние торможения).
+MCU: `CLEAN_TABLO_FW` (шестерёнка → 4 параметра настроек).
 
 Build: `BuildFromDesign.ps1`
