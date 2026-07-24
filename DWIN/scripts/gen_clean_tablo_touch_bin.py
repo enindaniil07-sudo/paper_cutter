@@ -2,10 +2,10 @@
 """
 CLEAN_TABLO 13TouchFile.bin
 
-Page 0: RESET/STOP + gear→16 + Variable Data Input VP 6000 (keyboard page 10)
+Page 0: RESET/STOP + gear→17 + Variable Data Input VP 6000 (keyboard page 10)
 Page 10: ASCII keys for VarInput (ЗАДАНО)
-Page 16: settings list — 4× VarInput (keyboard page 17) + НАЗАД→0
-Page 17: ASCII keys for settings VarInput
+Page 17: settings list — 4× VarInput (keyboard page 18) + НАЗАД→0 + OFF/ON
+Page 18: ASCII keys for settings VarInput
 """
 from __future__ import annotations
 
@@ -15,8 +15,8 @@ import struct
 from pathlib import Path
 
 PAGE_KB = 10
-PAGE_SET = 16
-PAGE_EDIT = 17
+PAGE_SET = 17
+PAGE_EDIT = 18
 
 
 def pack_bit_button(page: int, c: dict, vp: int, pic_on: int, pic_next: int) -> bytes:
@@ -57,13 +57,13 @@ def pack_var_input(
     v_max: int,
     kb_page: int,
     cursor: dict | None = None,
+    font: int = 24,
 ) -> bytes:
-    """Variable Data Input — touch on page; digits draw at cursor (often keypad page)."""
+    """Variable Data Input — touch on page; digits draw at cursor."""
     xs, ys = int(touch["x"]), int(touch["y"])
     xe, ye = xs + int(touch["w"]), ys + int(touch["h"])
-    # Digits grow left from cursor. For other-page keyboard put cursor on that page
-    # display (same pattern as ЗАДАНО → page 10 kb_display).
     cur = cursor if cursor is not None else disp
+    # Digits grow left from cursor (same as ЗАДАНО → kb_display on page 10).
     cx = int(cur["x"]) + int(cur["w"]) - 36
     cy = int(cur["y"]) + 18
 
@@ -87,9 +87,9 @@ def pack_var_input(
     rec[20] = n_int & 0xFF
     rec[21] = 0  # N_Dot
     struct.pack_into(">HH", rec, 22, cx & 0xFFFF, cy & 0xFFFF)
-    struct.pack_into(">H", rec, 26, 0xFFFF)  # color
+    struct.pack_into(">H", rec, 26, 0xFFFF)  # color white
     rec[28] = 0  # Lib ASCII
-    rec[29] = 24  # font
+    rec[29] = font & 0xFF
     rec[30] = 0xF8  # cursor color
     rec[31] = 1  # show digits
     rec[32] = 0xFE
@@ -199,8 +199,8 @@ def main() -> int:
     for key, code in KB_KEYS:
         out += pack_ascii_key(PAGE_KB, c[key], code)
 
-    # Page 16: back + VarInputs (touch = value box; digits while editing on page 17)
-    # Idle values: ArtText in 14ShowFile (form_clean_tablo_show_pages).
+    # Page 17: back + VarInputs. Idle digits = ArtText in 14ShowFile (page17).
+    # Edit digits = cursor on page18 set_edit_display (same as ЗАДАНО→kb_display).
     kb_cur = c["set_edit_display"]
     out += pack_bit_button(PAGE_SET, c["btn_settings_back"], 0x6056, -1, 0)
     out += pack_var_input(
@@ -215,7 +215,6 @@ def main() -> int:
         kb_page=PAGE_EDIT,
         cursor=kb_cur,
     )
-    # 6090 is LONG (4 bytes) → next free VP is 6094
     out += pack_var_input(
         PAGE_SET,
         c["set_val_on"],
@@ -264,7 +263,7 @@ def main() -> int:
     path = root / "DWIN_SET" / "13TouchFile.bin"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(out)
-    print(f"Wrote {path} ({len(out)} bytes) settings VarInput page16->17")
+    print(f"Wrote {path} ({len(out)} bytes) settings VarInput page17->18")
     return 0
 
 

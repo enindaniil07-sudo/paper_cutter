@@ -86,7 +86,7 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 # Sync all page BMPs into DWIN_SET (for DGUS / inspection) then pack ICL
-$pageIds = @(0, 1, 2, 10, 11, 12, 13, 14, 15, 16, 17)
+$pageIds = @(0, 1, 2, 10, 11, 12, 13, 14, 15, 16, 17, 18)
 $tftDir = Join-Path $Root "TFT"
 New-Item -ItemType Directory -Force -Path $tftDir | Out-Null
 foreach ($i in $pageIds) {
@@ -100,7 +100,7 @@ foreach ($i in $pageIds) {
 Remove-Item (Join-Path $dstSet "04.bmp") -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $Root "04.bmp") -Force -ErrorAction SilentlyContinue
 
-& python (Join-Path $Repo "scripts\pack_dwin_set_screen_to_icl.py") --project $Root --icl-id 32 --bmps "00.bmp,01.bmp,02.bmp,10.bmp,11.bmp,12.bmp,13.bmp,14.bmp,15.bmp,16.bmp,17.bmp" --quality 92
+& python (Join-Path $Repo "scripts\pack_dwin_set_screen_to_icl.py") --project $Root --icl-id 32 --bmps "00.bmp,01.bmp,02.bmp,10.bmp,11.bmp,12.bmp,13.bmp,14.bmp,15.bmp,16.bmp,17.bmp,18.bmp" --quality 92
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Remove-Item (Join-Path $dstSet "03.bmp") -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $Root "03.bmp") -Force -ErrorAction SilentlyContinue

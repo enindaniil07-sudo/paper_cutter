@@ -4,8 +4,8 @@
     "description": "CLEAN_TABLO — settings: brake distance, PWM on/off ms, speed limit",
     "theme": "soft-glass",
     "keypad_page": 10,
-    "settings_page": 16,
-    "settings_edit_page": 17
+    "settings_page": 17,
+    "settings_edit_page": 18
   },
   "decor": {
     "target_rim": { "x": 16, "y": 12, "w": 368, "h": 172 },

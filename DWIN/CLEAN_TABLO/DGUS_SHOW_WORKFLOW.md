@@ -1,23 +1,20 @@
-# CLEAN_TABLO — show / слои / прогресс
+# CLEAN_TABLO — show / слои
 
-## Корневые причины
+## Жёсткое правило
 
-1. **Полный Python-rewrite `14ShowFile.bin`** ломает смену страниц (настройки «под» главным).
-2. **ArtText / любые виджеты на page16** в Python-патче — снова ломают слои на этой панели.
-3. **`dwinSetPage(16)` вместе с Pic_Next=16** — UART и тач дерутся за композитинг.
-4. DGUS Save→Generate даёт рабочий контейнер; page16 без виджетов — слои ок.
+**Не создавать ArtText на стр. 16/17/18 с нуля в Python.**  
+Idle-цифры настроек — только через **DGUS Save→Generate**, затем минимальный патч.
 
-## Текущий безопасный патч
+Пустые слоты → FF-sentinel (никогда не `0x4000` / MAIN).
 
-`scripts/form_clean_tablo_show_pages.py`:
-- база: `_from_dgus_generate/14ShowFile.bin`
-- LONG32 для 6000/6010
-- вставка IconShow VP6030 в page0
-- **page16 остаётся пустой** (cnt=0) — жёсткое правило
-- пустые слоты не указывают на MAIN (0x4000)
+## Рабочий патч (`form_clean_tablo_show_pages.py`)
 
-Ввод настроек: VarInput → стр. 17 (цифры в окне клавиатуры). Значения в окошках стр. 16 без ArtText пока не рисуются (иначе снова слои).
+База: `_from_dgus_generate/14ShowFile.bin`
 
-## MCU
+1. IconShow VP6030 на стр.0 (сдвиг указателей, без ломания page17)  
+2. Нормализация ArtText: LONG/UINT16, Icon0=30, цвет белый  
+3. Если в базе на стр.17 уже есть ArtText — **сохранить**  
+4. Стр. **16 / 18** — пустые на sentinel  
 
-`actSettingsOpen`: только `pushSettings()`, **без** `dwinSetPage(16)`.
+Скрипты: `form_clean_tablo_show_pages.py`, `gen_clean_tablo_touch_bin.py`, `render_clean_tablo_settings.py`.  
+SD: `F:\` и `F:\DWIN_SET`; после смены show — полный цикл питания.

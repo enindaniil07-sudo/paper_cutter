@@ -181,21 +181,30 @@ def main() -> int:
     out.mkdir(parents=True, exist_ok=True)
     (root / "source").mkdir(parents=True, exist_ok=True)
 
-    p16 = render_settings(w, h, layout)
+    # page16 unused (empty show slot — ArtText on 16 broke layering)
+    blank = Image.new("RGB", (w, h), (16, 20, 28))
     path16 = out / "16.bmp"
-    p16.save(path16)
+    blank.save(path16)
     _sync(path16, root / "DWIN_SET" / "16.bmp")
     _sync(path16, root / "16.bmp")
-    p16.save(root / "source" / "page16_settings.png")
 
-    p17 = render_edit(w, h, layout)
+    # page17 = settings list (ArtText digits live here)
+    p17 = render_settings(w, h, layout)
     path17 = out / "17.bmp"
     p17.save(path17)
     _sync(path17, root / "DWIN_SET" / "17.bmp")
     _sync(path17, root / "17.bmp")
-    p17.save(root / "source" / "page17_settings_edit.png")
+    p17.save(root / "source" / "page17_settings.png")
 
-    print("Wrote", path16, "and", path17)
+    # page18 = settings edit keypad
+    p18 = render_edit(w, h, layout)
+    path18 = out / "18.bmp"
+    p18.save(path18)
+    _sync(path18, root / "DWIN_SET" / "18.bmp")
+    _sync(path18, root / "18.bmp")
+    p18.save(root / "source" / "page18_settings_edit.png")
+
+    print("Wrote", path16, "(blank),", path17, "(settings),", path18, "(edit)")
     return 0
 
 
