@@ -56,13 +56,16 @@ def pack_var_input(
     v_min: int,
     v_max: int,
     kb_page: int,
+    cursor: dict | None = None,
 ) -> bytes:
-    """Variable Data Input — shows value + opens ASCII keyboard on kb_page."""
+    """Variable Data Input — touch on page; digits draw at cursor (often keypad page)."""
     xs, ys = int(touch["x"]), int(touch["y"])
     xe, ye = xs + int(touch["w"]), ys + int(touch["h"])
-    # Digits grow left from cursor — place near right of value box.
-    cx = int(disp["x"]) + int(disp["w"]) - 36
-    cy = int(disp["y"]) + max(8, (int(disp["h"]) - 28) // 2)
+    # Digits grow left from cursor. For other-page keyboard put cursor on that page
+    # display (same pattern as ЗАДАНО → page 10 kb_display).
+    cur = cursor if cursor is not None else disp
+    cx = int(cur["x"]) + int(cur["w"]) - 36
+    cy = int(cur["y"]) + 18
 
     rec = bytearray(64)
     struct.pack_into(
@@ -196,11 +199,13 @@ def main() -> int:
     for key, code in KB_KEYS:
         out += pack_ascii_key(PAGE_KB, c[key], code)
 
-    # Page 16: back + four VarInputs (values shown by panel ASCII)
+    # Page 16: back + VarInputs (touch = value box; digits while editing on page 17)
+    # Idle values: ArtText in 14ShowFile (form_clean_tablo_show_pages).
+    kb_cur = c["set_edit_display"]
     out += pack_bit_button(PAGE_SET, c["btn_settings_back"], 0x6056, -1, 0)
     out += pack_var_input(
         PAGE_SET,
-        c["set_row_brake"],
+        c["set_val_brake"],
         c["set_val_brake"],
         0x6090,
         v_type=1,
@@ -208,11 +213,12 @@ def main() -> int:
         v_min=0,
         v_max=99999,
         kb_page=PAGE_EDIT,
+        cursor=kb_cur,
     )
     # 6090 is LONG (4 bytes) → next free VP is 6094
     out += pack_var_input(
         PAGE_SET,
-        c["set_row_on"],
+        c["set_val_on"],
         c["set_val_on"],
         0x6094,
         v_type=0,
@@ -220,10 +226,11 @@ def main() -> int:
         v_min=0,
         v_max=9999,
         kb_page=PAGE_EDIT,
+        cursor=kb_cur,
     )
     out += pack_var_input(
         PAGE_SET,
-        c["set_row_off"],
+        c["set_val_off"],
         c["set_val_off"],
         0x6096,
         v_type=0,
@@ -231,6 +238,7 @@ def main() -> int:
         v_min=0,
         v_max=9999,
         kb_page=PAGE_EDIT,
+        cursor=kb_cur,
     )
     out += pack_var_input(
         PAGE_SET,
@@ -242,6 +250,7 @@ def main() -> int:
         v_min=0,
         v_max=9999,
         kb_page=PAGE_EDIT,
+        cursor=kb_cur,
     )
     # Speed-limit enable: OFF / ON (inching → MCU)
     out += pack_bit_button(PAGE_SET, c["set_spd_off"], 0x609A, -1, -1)

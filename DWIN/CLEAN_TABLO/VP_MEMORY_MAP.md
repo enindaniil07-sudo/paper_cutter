@@ -20,8 +20,8 @@
 | НАЗАД (настр.) | 6056 | BitButton Pic_Next=0 |
 | KB buffer | 6080 | ArtTextShow |
 | Keys / OK / Cancel | 60A1–60AD | (ASCII на стр. 10) |
-| Расстояние торможения, м | 6090 | VarInput LONG →17 |
-| Время тормоз (1), мс | 6094 | VarInput INT16 →17 |
-| Время отпуск (0), мс | 6096 | VarInput INT16 →17 |
-| Ограничение скорости ×0.01 | 6098 | VarInput INT16 →17 |
+| Расстояние торможения, м | 6090 | VarInput LONG →17 (без ArtText на page16) |
+| Время тормоз (1), мс | 6094 | VarInput →17 |
+| Время отпуск (0), мс | 6096 | VarInput →17 |
+| Ограничение скорости ×0.01 | 6098 | VarInput →17 |
 | Лимит скорости OFF / ON | 609A / 609B | BitButton |

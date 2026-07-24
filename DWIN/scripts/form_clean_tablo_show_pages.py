@@ -2,12 +2,14 @@
 """
 CLEAN_TABLO show patch — DGUS Save->Generate container is sacred.
 
-Reads pristine from DWIN_SET/_from_dgus_generate/14ShowFile.bin (or current if missing),
+Reads pristine from DWIN_SET/_from_dgus_generate/14ShowFile.bin,
 writes DWIN_SET/14ShowFile.bin:
 
-1) Force LONG32 on VP 6000/6010 (MCU U32 meters)
+1) Force LONG32 on VP 6000/6010
 2) Insert IconShow VP6030 progress into page0 (shift page10 KB + empty sentinel)
-3) Does NOT activate page16 ArtText — that broke layering; brake number needs DGUS Generate
+3) page16 stays EMPTY (cnt=0) — ArtText on page16 breaks layering
+   (settings drawn under main). Idle values: not in show; edit digits on page17
+   via VarInput cursor on set_edit_display.
 
 Never rewrite the whole page directory from scratch.
 """
@@ -38,7 +40,6 @@ def get_entry(s: bytes, page: int) -> tuple[int, int]:
 
 
 def pack_icon_progress() -> bytes:
-    """IconShow 0x5A00 — VP6030 → 26.icl icons 70..170 (same as known-good bak)."""
     rec = bytearray(32)
     struct.pack_into(
         ">HHHHHHHH",
@@ -84,12 +85,10 @@ def patch_vartypes(s: bytearray) -> int:
 
 
 def ensure_progress_icon(s: bytearray) -> None:
-    """Insert IconShow as 4th page0 widget; shift KB + empty by +32."""
     cnt0, ptr0 = get_entry(s, 0)
     if ptr0 != PAYLOAD:
         raise SystemExit(f"unexpected page0 ptr 0x{ptr0:04X}")
 
-    # Already have IconShow on page0?
     for i in range(cnt0):
         off = ptr0 + i * 32
         if s[off] == 0x5A and s[off + 1] == 0x00:
@@ -105,36 +104,28 @@ def ensure_progress_icon(s: bytearray) -> None:
     if cnt10 != 1 or ptr10 != 0x4060:
         raise SystemExit(f"expected page10 @0x4060 cnt=1, got ptr=0x{ptr10:04X} cnt={cnt10}")
 
-    icon = pack_icon_progress()
-    # Expand file by 32 bytes at insert point 0x4060
-    insert_at = 0x4060
-    s[insert_at:insert_at] = icon  # shifts rest right
+    s[0x4060:0x4060] = pack_icon_progress()
 
-    # page0 now 4 contiguous widgets
     put_entry(s, 0, 4, PAYLOAD)
-
-    # page10 KB moved +32
     put_entry(s, 10, 1, 0x4080)
 
-    # DGUS empty-near (pages 1-9) followed page0 end → was 0x4060, now 0x4080
     for p in range(1, 10):
         put_entry(s, p, 0, 0x4080)
 
-    # empty-far / unused (11..max and beyond used slots) was 0x4080 FF, now 0x40A0
     maxp = s[9]
     for p in range(11, max(maxp, 16) + 1):
         put_entry(s, p, 0, 0x40A0)
 
-    # Also fix high directory slots that still say 0x4080 (were empty-far)
     page_slots = (PAYLOAD - ENTRY0) // 4
     for p in range(max(maxp, 16) + 1, page_slots):
         cnt, ptr = get_entry(s, p)
         if cnt == 0 and ptr == 0x4080:
             put_entry(s, p, 0, 0x40A0)
 
-    # Ensure FF sentinel at new empty-far
     if len(s) < 0x40C0:
         s.extend(b"\x00" * (0x40C0 - len(s)))
+    # Drop any leftover widgets after empty-far (bad page16 appends from older patches)
+    del s[0x40C0:]
     s[0x40A0:0x40C0] = b"\xff" * 32
 
     print("  inserted IconShow VP6030 @0x4060; page10->0x4080; empty-far->0x40A0")
@@ -159,17 +150,21 @@ def main() -> int:
         raise SystemExit("bad pristine header")
 
     print(f"Base: {pristine} ({len(s)} bytes, max={s[9]})")
-    print("VarTypes:")
-    n = patch_vartypes(s)
     print("Progress IconShow:")
     ensure_progress_icon(s)
+    print("VarTypes:")
+    n = patch_vartypes(s)
 
-    # Hard rule: page16 stays empty (cnt=0) — settings values via touch VarInput
-# (adding ArtText here previously broke main/settings layering)
+    # Hard rule: page16 empty — ArtText here breaks main/settings layering
     cnt16, ptr16 = get_entry(s, 16)
     if cnt16 != 0:
         print(f"WARNING: forcing page16 empty (was cnt={cnt16} ptr=0x{ptr16:04X})")
-        put_entry(s, 16, 0, 0x40A0)
+    put_entry(s, 16, 0, 0x40A0)
+    put_entry(s, 17, 0, 0x40A0)
+
+    bad = [p for p in range((PAYLOAD - ENTRY0) // 4) if get_entry(s, p) == (0, PAYLOAD)]
+    if bad:
+        raise SystemExit(f"layering hazard: empty pages point at MAIN: {bad[:20]}")
 
     out.write_bytes(s)
     print(f"OK -> {out} (len={len(s)}, type_patches={n}, page16 empty)")
