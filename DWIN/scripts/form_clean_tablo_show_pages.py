@@ -66,11 +66,13 @@ def pack_arttext(
     *,
     n_int: int,
     var_type: int,
+    icon0: int = 30,
+    lib: int = 24,
 ) -> bytes:
     rec = bytearray(32)
     struct.pack_into(">HHHHHH", rec, 0, 0x5A03, sp & 0xFFFF, 0x0009, vp & 0xFFFF, x & 0xFFFF, y & 0xFFFF)
-    struct.pack_into(">H", rec, 12, 30)
-    rec[14] = 24
+    struct.pack_into(">H", rec, 12, icon0 & 0xFFFF)
+    rec[14] = lib & 0xFF
     rec[15] = 0
     rec[16] = n_int & 0xFF
     rec[17] = 0
@@ -111,12 +113,27 @@ def ensure_progress_icon(s: bytearray) -> None:
     print(f"  inserted IconShow at 0x{insert_at:04X}; shifted ptrs >= insert")
 
 
-def patch_arttext_widget(s: bytearray, off: int, *, n_int: int, var_type: int, sp: int) -> None:
+def patch_arttext_widget(
+    s: bytearray,
+    off: int,
+    *,
+    n_int: int,
+    var_type: int,
+    sp: int,
+    icon0: int = 30,
+    lib: int = 24,
+    x: int | None = None,
+    y: int | None = None,
+) -> None:
     if s[off] != 0x5A or s[off + 1] != 0x03:
         return
     struct.pack_into(">H", s, off + 2, sp & 0xFFFF)
-    struct.pack_into(">H", s, off + 12, 30)
-    s[off + 14] = 24
+    if x is not None:
+        struct.pack_into(">H", s, off + 8, x & 0xFFFF)
+    if y is not None:
+        struct.pack_into(">H", s, off + 10, y & 0xFFFF)
+    struct.pack_into(">H", s, off + 12, icon0 & 0xFFFF)
+    s[off + 14] = lib & 0xFF
     s[off + 15] = 0
     s[off + 16] = n_int & 0xFF
     s[off + 17] = 0
@@ -126,19 +143,28 @@ def patch_arttext_widget(s: bytearray, off: int, *, n_int: int, var_type: int, s
     struct.pack_into(">H", s, off + 21, 0xFFFF)
 
 
-# Large wells: x=400 w=320 → right edge 720. Y slightly above visual center.
+# Settings use 25.icl / Icon0=50 (34×52 cells) — larger than 28×36, tighter pitch than 56×72.
+# X=720 = right edge of large wells; Y centered in value wells for 52px glyphs.
 SETTINGS_ART = (
-    (0x5190, 0x6090, 5, ART_VAR_LONG32, 720, 100),
-    (0x51A0, 0x6094, 4, ART_VAR_UINT16, 720, 224),
-    (0x51B0, 0x6096, 4, ART_VAR_UINT16, 720, 348),
+    (0x5190, 0x6090, 5, ART_VAR_LONG32, 720, 105),
+    (0x51A0, 0x6094, 4, ART_VAR_UINT16, 720, 229),
+    (0x51B0, 0x6096, 4, ART_VAR_UINT16, 720, 353),
 )
+
+# Main ЗАДАНО / ОСТАЛОСЬ: Y = top of 112px wells (glyphs are 56×112).
+# Speed well is only 72px tall — nudge Y up so 112px glyphs sit in the rim.
+MAIN_ART_XY = {
+    0x6000: (368, 56),
+    0x6010: (692, 56),
+    0x6020: (760, 248),
+}
 
 
 def rewrite_settings_page17(s: bytearray, ptr: int) -> None:
     blob = bytearray()
     for sp, vp, n_int, vtype, x, y in SETTINGS_ART:
-        blob += pack_arttext(sp, vp, x, y, n_int=n_int, var_type=vtype)
-        print(f"  ArtText VP {vp:04X} @({x},{y}) N={n_int} type={vtype}")
+        blob += pack_arttext(sp, vp, x, y, n_int=n_int, var_type=vtype, icon0=50, lib=25)
+        print(f"  ArtText VP {vp:04X} @({x},{y}) N={n_int} type={vtype} lib=25 icon0=50")
     need = ptr + len(blob) + 32
     if len(s) < need:
         s.extend(b"\x00" * (need - len(s)))
@@ -149,14 +175,15 @@ def rewrite_settings_page17(s: bytearray, ptr: int) -> None:
 
 def patch_vartypes(s: bytearray) -> int:
     n = 0
+    # (n_int, var_type, sp, icon0, lib)
     want = {
-        0x6000: (5, ART_VAR_LONG32, 0x5100),
-        0x6010: (5, ART_VAR_LONG32, 0x5110),
-        0x6020: (2, ART_VAR_UINT16, 0x5120),
-        0x6080: (5, ART_VAR_UINT16, 0x5180),
-        0x6090: (5, ART_VAR_LONG32, 0x5190),
-        0x6094: (4, ART_VAR_UINT16, 0x51A0),
-        0x6096: (4, ART_VAR_UINT16, 0x51B0),
+        0x6000: (5, ART_VAR_LONG32, 0x5100, 30, 24),
+        0x6010: (5, ART_VAR_LONG32, 0x5110, 30, 24),
+        0x6020: (2, ART_VAR_UINT16, 0x5120, 30, 24),
+        0x6080: (5, ART_VAR_UINT16, 0x5180, 30, 24),
+        0x6090: (5, ART_VAR_LONG32, 0x5190, 50, 25),
+        0x6094: (4, ART_VAR_UINT16, 0x51A0, 50, 25),
+        0x6096: (4, ART_VAR_UINT16, 0x51B0, 50, 25),
     }
     for off in range(PAYLOAD, len(s) - 31, 32):
         if s[off] != 0x5A or s[off + 1] != 0x03:
@@ -164,12 +191,24 @@ def patch_vartypes(s: bytearray) -> int:
         vp = struct.unpack_from(">H", s, off + 6)[0]
         if vp not in want:
             continue
-        n_int, vtype, sp = want[vp]
+        n_int, vtype, sp, icon0, lib = want[vp]
+        xy = MAIN_ART_XY.get(vp)
         before = bytes(s[off : off + 32])
-        patch_arttext_widget(s, off, n_int=n_int, var_type=vtype, sp=sp)
+        patch_arttext_widget(
+            s,
+            off,
+            n_int=n_int,
+            var_type=vtype,
+            sp=sp,
+            icon0=icon0,
+            lib=lib,
+            x=None if xy is None else xy[0],
+            y=None if xy is None else xy[1],
+        )
         if bytes(s[off : off + 32]) != before:
             n += 1
-            print(f"  VP {vp:04X} @0x{off:04X}: N={n_int} type={vtype} SP={sp:04X}")
+            extra = f" xy={xy}" if xy else ""
+            print(f"  VP {vp:04X} @0x{off:04X}: N={n_int} type={vtype} lib={lib} icon0={icon0}{extra}")
         else:
             print(f"  VP {vp:04X} @0x{off:04X}: OK")
     return n
