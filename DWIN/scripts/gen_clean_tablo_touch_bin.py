@@ -234,7 +234,7 @@ def main() -> int:
     )
     out += pack_var_input(
         PAGE_SET,
-        c["set_row_spd"],
+        c["set_val_spd"],
         c["set_val_spd"],
         0x6098,
         v_type=0,
@@ -243,6 +243,9 @@ def main() -> int:
         v_max=9999,
         kb_page=PAGE_EDIT,
     )
+    # Speed-limit enable: OFF / ON (inching → MCU)
+    out += pack_bit_button(PAGE_SET, c["set_spd_off"], 0x609A, -1, -1)
+    out += pack_bit_button(PAGE_SET, c["set_spd_on"], 0x609B, -1, -1)
 
     for key, code in SET_EDIT_KEYS:
         out += pack_ascii_key(PAGE_EDIT, c[key], code)

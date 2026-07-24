@@ -23,6 +23,8 @@ REQUIRED = (
     "set_row_off",
     "set_val_off",
     "set_row_spd",
+    "set_spd_off",
+    "set_spd_on",
     "set_val_spd",
     "set_edit_display",
     "set_edit_0",
