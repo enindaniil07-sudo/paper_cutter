@@ -49,8 +49,6 @@ struct PlantData {
   uint32_t brakeM;         // расстояние торможения, м
   uint16_t brakeOnMs;      // длительность ШИМ «1» (тормоз)
   uint16_t brakeOffMs;     // длительность ШИМ «0» (отпуск)
-  uint16_t speedLimitCms;  // ограничение скорости ×0.01 м/с
-  bool speedLimitEn;       // ON/OFF режима ограничения скорости
 };
 
 void fsmBegin();

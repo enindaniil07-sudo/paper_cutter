@@ -79,9 +79,6 @@ static constexpr uint16_t VP_KB_CANCEL = 0x60AD;
 static constexpr uint16_t VP_BRAKE = 0x6090;          // м, U32
 static constexpr uint16_t VP_BRAKE_ON_MS = 0x6094;    // ШИМ «1» мс
 static constexpr uint16_t VP_BRAKE_OFF_MS = 0x6096;   // ШИМ «0» мс
-static constexpr uint16_t VP_SPEED_LIMIT = 0x6098;    // ×0.01 м/с
-static constexpr uint16_t VP_SPEED_LIMIT_OFF = 0x609A; // BitButton: выкл лимит
-static constexpr uint16_t VP_SPEED_LIMIT_ON = 0x609B;  // BitButton: вкл лимит
 
 static constexpr uint16_t PAGE_MAIN = 0;
 static constexpr uint16_t PAGE_KEYPAD = 10;

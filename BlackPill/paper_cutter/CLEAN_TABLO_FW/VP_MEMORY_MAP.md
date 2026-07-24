@@ -23,5 +23,3 @@
 | Расстояние торможения, м | 6090 | ArtText LONG на стр.17 + VarInput→18 |
 | Время тормоз (1), мс | 6094 | ArtText + VarInput→18 |
 | Время отпуск (0), мс | 6096 | ArtText + VarInput→18 |
-| Ограничение скорости ×0.01 | 6098 | ArtText + VarInput→18 |
-| Лимит скорости OFF / ON | 609A / 609B | BitButton |

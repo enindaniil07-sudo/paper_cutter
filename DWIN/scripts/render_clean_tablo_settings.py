@@ -59,55 +59,24 @@ def render_settings(w: int, h: int, layout: dict) -> Image.Image:
     _center(dr, back, "НАЗАД", f_b, (255, 220, 225))
 
     rows = [
-        (
-            "set_row_brake",
-            "set_val_brake",
-            "РАССТОЯНИЕ ТОРМОЖЕНИЯ",
-            "м",
-        ),
-        (
-            "set_row_on",
-            "set_val_on",
-            "ВРЕМЯ ТОРМОЗ (1)",
-            "мс",
-        ),
-        (
-            "set_row_off",
-            "set_val_off",
-            "ВРЕМЯ ОТПУСК (0)",
-            "мс",
-        ),
-        (
-            "set_row_spd",
-            "set_val_spd",
-            "ОГРАНИЧЕНИЕ СКОРОСТИ",
-            "м/с",
-        ),
+        ("set_row_brake", "set_val_brake", "РАССТОЯНИЕ ТОРМОЖЕНИЯ", "м"),
+        ("set_row_on", "set_val_on", "ВРЕМЯ ТОРМОЗ (1)", "мс"),
+        ("set_row_off", "set_val_off", "ВРЕМЯ ОТПУСК (0)", "мс"),
     ]
-    f_h = font(18, True)
-    f_u = font(14, True)
+    f_h = font(20, True)
+    f_u = font(16, True)
     for row_k, val_k, head, unit in rows:
         row = c[row_k]
         val = c[val_k]
         dr.rounded_rectangle(_box(row), radius=14, fill=(28, 32, 42), outline=AMBER, width=2)
-        dr.text((row["x"] + 16, row["y"] + (row["h"] - 20) / 2), head, fill=(255, 220, 180), font=f_h)
+        dr.text((row["x"] + 16, row["y"] + (row["h"] - 22) / 2), head, fill=(255, 220, 180), font=f_h)
         dr.rounded_rectangle(_box(val), radius=10, fill=(0, 0, 0), outline=(120, 140, 160), width=2)
-        # Unit to the right of the value box so VarInput digits stay clear
         dr.text(
-            (val["x"] + val["w"] + 8, val["y"] + (val["h"] - 16) / 2),
+            (val["x"] + val["w"] + 10, val["y"] + (val["h"] - 18) / 2),
             unit,
             fill=(160, 170, 185),
             font=f_u,
         )
-
-    # Speed-limit enable: OFF / ON (MCU BitButtons)
-    off_b = c["set_spd_off"]
-    on_b = c["set_spd_on"]
-    f_tog = font(16, True)
-    dr.rounded_rectangle(_box(off_b), radius=10, fill=(70, 40, 44), outline=(220, 120, 130), width=2)
-    _center(dr, off_b, "OFF", f_tog, (255, 210, 215))
-    dr.rounded_rectangle(_box(on_b), radius=10, fill=(36, 90, 70), outline=(120, 210, 160), width=2)
-    _center(dr, on_b, "ON", f_tog, (220, 255, 235))
     return im
 
 

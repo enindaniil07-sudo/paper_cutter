@@ -4,11 +4,8 @@ CLEAN_TABLO show patch — DGUS Save->Generate container is sacred.
 
 1) Insert IconShow VP6030 into page0 (shift later widgets, fix pointers)
 2) LONG32/UINT16 + white digits / Icon0=30 on ArtText
-3) If DGUS already put ArtText on page17 — KEEP it (do not clear)
+3) If DGUS put ArtText on page17 — rewrite to 3 settings (no speed limit)
 4) page16/18 stay EMPTY at FF-sentinel (never point empty→MAIN 0x4000)
-
-Never append new ArtText on 16/17/18 from scratch in Python.
-Never rewrite the whole page directory from scratch.
 """
 from __future__ import annotations
 
@@ -61,6 +58,29 @@ def pack_icon_progress() -> bytes:
     return bytes(rec)
 
 
+def pack_arttext(
+    sp: int,
+    vp: int,
+    x: int,
+    y: int,
+    *,
+    n_int: int,
+    var_type: int,
+) -> bytes:
+    rec = bytearray(32)
+    struct.pack_into(">HHHHHH", rec, 0, 0x5A03, sp & 0xFFFF, 0x0009, vp & 0xFFFF, x & 0xFFFF, y & 0xFFFF)
+    struct.pack_into(">H", rec, 12, 30)
+    rec[14] = 24
+    rec[15] = 0
+    rec[16] = n_int & 0xFF
+    rec[17] = 0
+    rec[18] = var_type & 0xFF
+    rec[19] = 0x01
+    rec[20] = 0
+    struct.pack_into(">H", rec, 21, 0xFFFF)
+    return bytes(rec)
+
+
 def _shift_ptrs(s: bytearray, at_or_after: int, delta: int) -> None:
     page_slots = (PAYLOAD - ENTRY0) // 4
     for p in range(page_slots):
@@ -84,60 +104,50 @@ def ensure_progress_icon(s: bytearray) -> None:
     if cnt0 != 3:
         raise SystemExit(f"expected page0 cnt=3 (DGUS), got {cnt0}")
 
-    # Insert after the 3 ArtTexts (0x4060 in pristine-with-settings layout).
     insert_at = PAYLOAD + 3 * 32
-    icon = pack_icon_progress()
-    s[insert_at:insert_at] = icon
+    s[insert_at:insert_at] = pack_icon_progress()
     _shift_ptrs(s, insert_at, 32)
-    # page0 itself still starts at PAYLOAD; only bump count.
     put_entry(s, 0, 4, PAYLOAD)
     print(f"  inserted IconShow at 0x{insert_at:04X}; shifted ptrs >= insert")
 
 
 def patch_arttext_widget(s: bytearray, off: int, *, n_int: int, var_type: int, sp: int) -> None:
-    """Normalize glyph/color/type so digits are visible and match MCU width."""
     if s[off] != 0x5A or s[off + 1] != 0x03:
         return
     struct.pack_into(">H", s, off + 2, sp & 0xFFFF)
-    struct.pack_into(">H", s, off + 12, 30)  # Icon0 = '0' in 24.icl
-    s[off + 14] = 24  # Lib
+    struct.pack_into(">H", s, off + 12, 30)
+    s[off + 14] = 24
     s[off + 15] = 0
     s[off + 16] = n_int & 0xFF
     s[off + 17] = 0
     s[off + 18] = var_type & 0xFF
-    s[off + 19] = 0x01  # right align
+    s[off + 19] = 0x01
     s[off + 20] = 0
-    struct.pack_into(">H", s, off + 21, 0xFFFF)  # white (DGUS often leaves 0=black)
+    struct.pack_into(">H", s, off + 21, 0xFFFF)
 
 
-# Idle digits in settings wells (layout.json set_val_*). Y nudged up so glyphs sit in the black frame.
-SETTINGS_ART_XY = {
-    0x6090: (700, 84),   # set_val_brake 500,90,200x50
-    0x6094: (700, 173),  # set_val_on    500,180
-    0x6096: (700, 263),  # set_val_off   500,270
-    0x6098: (700, 354),  # set_val_spd   520,360
-}
+# Large wells: x=400 w=320 → right edge 720. Y slightly above visual center.
+SETTINGS_ART = (
+    (0x5190, 0x6090, 5, ART_VAR_LONG32, 720, 100),
+    (0x51A0, 0x6094, 4, ART_VAR_UINT16, 720, 224),
+    (0x51B0, 0x6096, 4, ART_VAR_UINT16, 720, 348),
+)
 
 
-def patch_settings_xy(s: bytearray) -> int:
-    n = 0
-    for off in range(PAYLOAD, len(s) - 31, 32):
-        if s[off] != 0x5A or s[off + 1] != 0x03:
-            continue
-        vp = struct.unpack_from(">H", s, off + 6)[0]
-        if vp not in SETTINGS_ART_XY:
-            continue
-        x, y = SETTINGS_ART_XY[vp]
-        ox, oy = struct.unpack_from(">HH", s, off + 8)
-        if ox != x or oy != y:
-            struct.pack_into(">HH", s, off + 8, x, y)
-            n += 1
-            print(f"  VP {vp:04X}: xy ({ox},{oy}) -> ({x},{y})")
-    return n
+def rewrite_settings_page17(s: bytearray, ptr: int) -> None:
+    blob = bytearray()
+    for sp, vp, n_int, vtype, x, y in SETTINGS_ART:
+        blob += pack_arttext(sp, vp, x, y, n_int=n_int, var_type=vtype)
+        print(f"  ArtText VP {vp:04X} @({x},{y}) N={n_int} type={vtype}")
+    need = ptr + len(blob) + 32
+    if len(s) < need:
+        s.extend(b"\x00" * (need - len(s)))
+    s[ptr : ptr + len(blob)] = blob
+    s[ptr + len(blob) : ptr + len(blob) + 32] = b"\xff" * 32
+    put_entry(s, 17, 3, ptr)
 
 
 def patch_vartypes(s: bytearray) -> int:
-    """Fix meter + settings ArtText types/glyphs/colors wherever they live."""
     n = 0
     want = {
         0x6000: (5, ART_VAR_LONG32, 0x5100),
@@ -147,7 +157,6 @@ def patch_vartypes(s: bytearray) -> int:
         0x6090: (5, ART_VAR_LONG32, 0x5190),
         0x6094: (4, ART_VAR_UINT16, 0x51A0),
         0x6096: (4, ART_VAR_UINT16, 0x51B0),
-        0x6098: (4, ART_VAR_UINT16, 0x51C0),
     }
     for off in range(PAYLOAD, len(s) - 31, 32):
         if s[off] != 0x5A or s[off + 1] != 0x03:
@@ -160,9 +169,7 @@ def patch_vartypes(s: bytearray) -> int:
         patch_arttext_widget(s, off, n_int=n_int, var_type=vtype, sp=sp)
         if bytes(s[off : off + 32]) != before:
             n += 1
-            print(
-                f"  VP {vp:04X} @0x{off:04X}: N={n_int} type={vtype} SP={sp:04X} white/Icon0=30"
-            )
+            print(f"  VP {vp:04X} @0x{off:04X}: N={n_int} type={vtype} SP={sp:04X}")
         else:
             print(f"  VP {vp:04X} @0x{off:04X}: OK")
     return n
@@ -173,23 +180,6 @@ def ensure_empty_sentinel(s: bytearray, far: int) -> None:
     if len(s) < need:
         s.extend(b"\x00" * (need - len(s)))
     s[far : far + 32] = b"\xff" * 32
-
-
-def normalize_empty_pages(s: bytearray, keep_pages: set[int], sentinel: int) -> None:
-    """Point unused pages at FF sentinel; never at MAIN."""
-    if s[9] < 18:
-        s[9] = 18
-    page_slots = (PAYLOAD - ENTRY0) // 4
-    for p in range(page_slots):
-        if p in keep_pages:
-            continue
-        cnt, ptr = get_entry(s, p)
-        if cnt == 0:
-            put_entry(s, p, 0, sentinel)
-        elif ptr == PAYLOAD and p != 0:
-            # Non-main page must not share MAIN payload with a positive count
-            # unless intentional; leave alone if it has its own widgets.
-            pass
 
 
 def main() -> int:
@@ -217,58 +207,58 @@ def main() -> int:
     cnt17, ptr17 = get_entry(s, 17)
     print(f"After icon: page17 cnt={cnt17} ptr=0x{ptr17:04X}")
 
+    if has_settings and cnt17 > 0:
+        print("Settings ArtText page17 (3 params, large wells):")
+        rewrite_settings_page17(s, ptr17)
+        cnt17, ptr17 = get_entry(s, 17)
+
     print("VarTypes / glyph / color:")
     n = patch_vartypes(s)
-    print("Settings ArtText XY (nudge up into wells):")
-    n += patch_settings_xy(s)
 
-    # Sentinel after last used payload widget.
     used_end = PAYLOAD
     for p in range((PAYLOAD - ENTRY0) // 4):
         cnt, ptr = get_entry(s, p)
         if cnt > 0:
             used_end = max(used_end, ptr + cnt * 32)
+    # Include cleared 4th slot after settings widgets.
+    if has_settings:
+        used_end = max(used_end, ptr17 + 4 * 32)
     sentinel = used_end
-    # Align to 0x20
     if sentinel % 32:
         sentinel += 32 - (sentinel % 32)
     ensure_empty_sentinel(s, sentinel)
-    # Trim trailing junk after sentinel block (keep file tight).
     del s[sentinel + 32 :]
 
     keep = {0, 10}
-    if has_settings and cnt17 > 0:
+    if has_settings and cnt17 == 3:
         keep.add(17)
-        print(f"Keeping page17 ArtText @0x{ptr17:04X} cnt={cnt17}")
+        print(f"Keeping page17 ArtText @0x{ptr17:04X} cnt=3")
     else:
         put_entry(s, 17, 0, sentinel)
         print("page17 empty (no DGUS ArtText in base)")
 
     put_entry(s, 16, 0, sentinel)
     put_entry(s, 18, 0, sentinel)
-    normalize_empty_pages(s, keep, sentinel)
 
-    # Re-point empty pages that still share live widget ptrs (layering hygiene).
-    for p in range((PAYLOAD - ENTRY0) // 4):
+    page_slots = (PAYLOAD - ENTRY0) // 4
+    if s[9] < 18:
+        s[9] = 18
+    for p in range(page_slots):
         if p in keep:
             continue
         cnt, ptr = get_entry(s, p)
-        if cnt == 0 and ptr != sentinel:
+        if cnt == 0:
             put_entry(s, p, 0, sentinel)
 
-    bad = [p for p in range((PAYLOAD - ENTRY0) // 4) if get_entry(s, p) == (0, PAYLOAD)]
+    bad = [p for p in range(page_slots) if get_entry(s, p) == (0, PAYLOAD)]
     if bad:
         raise SystemExit(f"layering hazard: empty pages point at MAIN: {bad[:20]}")
 
     if 17 in keep:
         c, p = get_entry(s, 17)
-        if c < 4:
-            raise SystemExit(f"page17 expected >=4 ArtText, got cnt={c}")
-        # Verify VPs
         vps = [struct.unpack_from(">H", s, p + i * 32 + 6)[0] for i in range(c)]
-        need = {0x6090, 0x6094, 0x6096, 0x6098}
-        if not need.issubset(set(vps)):
-            raise SystemExit(f"page17 VPs {vps} missing {need - set(vps)}")
+        if c != 3 or set(vps) != {0x6090, 0x6094, 0x6096}:
+            raise SystemExit(f"page17 bad: cnt={c} vps={vps}")
 
     out.write_bytes(s)
     print(f"OK -> {out} (len={len(s)}, patches={n}, sentinel=0x{sentinel:04X})")

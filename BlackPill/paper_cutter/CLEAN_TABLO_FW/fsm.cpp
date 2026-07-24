@@ -113,13 +113,12 @@ static uint16_t g_cacheKb = 0xFFFF;
 static uint32_t g_cacheBrake = 0xFFFFFFFFu;
 static uint16_t g_cacheBrakeOn = 0xFFFF;
 static uint16_t g_cacheBrakeOff = 0xFFFF;
-static uint16_t g_cacheSpeedLim = 0xFFFF;
 
 static void invalidateCaches() {
   g_cacheTarget = g_cacheRemain = 0xFFFFFFFFu;
   g_cacheSpeed = g_cacheProgress = g_cacheKb = 0xFFFF;
   g_cacheBrake = 0xFFFFFFFFu;
-  g_cacheBrakeOn = g_cacheBrakeOff = g_cacheSpeedLim = 0xFFFF;
+  g_cacheBrakeOn = g_cacheBrakeOff = 0xFFFF;
 }
 
 static uint32_t targetCm() { return g_plant.targetM * 100u; }
@@ -165,7 +164,22 @@ static void pushSettings() {
   dwinWriteU32IfChanged(VP_BRAKE, min(g_plant.brakeM, (uint32_t)MAX_METERS), g_cacheBrake);
   dwinWriteU16IfChanged(VP_BRAKE_ON_MS, g_plant.brakeOnMs, g_cacheBrakeOn);
   dwinWriteU16IfChanged(VP_BRAKE_OFF_MS, g_plant.brakeOffMs, g_cacheBrakeOff);
-  dwinWriteU16IfChanged(VP_SPEED_LIMIT, g_plant.speedLimitCms, g_cacheSpeedLim);
+}
+
+/** Ask panel for all settings VPs (OK may have written them moments ago). */
+static void requestSettingsReads() {
+  dwinRequestReadU32(VP_BRAKE);
+  dwinRequestReadU16(VP_BRAKE_ON_MS);
+  dwinRequestReadU16(VP_BRAKE_OFF_MS);
+}
+
+/** Pump UART until replies land in applySettingsVp / EEPROM. */
+static void pullSettingsFromPanel(uint32_t waitMs) {
+  requestSettingsReads();
+  const uint32_t t0 = millis();
+  while ((millis() - t0) < waitMs) {
+    dwinPoll(fsmOnDwinVp);
+  }
 }
 
 static void applySettingsVp(uint16_t vp, uint32_t value) {
@@ -191,13 +205,6 @@ static void applySettingsVp(uint16_t vp, uint32_t value) {
       changed = true;
     }
     g_cacheBrakeOff = (uint16_t)value;
-  } else if (vp == VP_SPEED_LIMIT) {
-    if (value > MAX_SPEED_CMS) value = MAX_SPEED_CMS;
-    if (g_plant.speedLimitCms != (uint16_t)value) {
-      g_plant.speedLimitCms = (uint16_t)value;
-      changed = true;
-    }
-    g_cacheSpeedLim = (uint16_t)value;
   }
   if (changed) settingsSave(g_plant);
 }
@@ -518,11 +525,14 @@ static void actSettingsOpen() {
   // UART page switch fights DGUS compositing ("settings under main").
   delay(30);
   g_cacheBrake = 0xFFFFFFFFu;
-  g_cacheBrakeOn = g_cacheBrakeOff = g_cacheSpeedLim = 0xFFFF;
+  g_cacheBrakeOn = g_cacheBrakeOff = 0xFFFF;
   pushSettings();
 }
 
 static void actSettingsBack() {
+  // VarInput OK writes the panel VP immediately; MCU only sees it via 0x83.
+  // Pull before leaving Settings so a quick НАЗАД cannot skip EEPROM save.
+  pullSettingsFromPanel(250);
   dwinSetPage(PAGE_MAIN);
   delay(20);
   dwinSetPage(PAGE_MAIN);
@@ -861,19 +871,8 @@ void fsmOnDwinVp(uint16_t vp, uint32_t value) {
     return;
   }
 
-  if (vp == VP_BRAKE || vp == VP_BRAKE_ON_MS || vp == VP_BRAKE_OFF_MS ||
-      vp == VP_SPEED_LIMIT) {
+  if (vp == VP_BRAKE || vp == VP_BRAKE_ON_MS || vp == VP_BRAKE_OFF_MS) {
     applySettingsVp(vp, value);
-    return;
-  }
-
-  if ((vp == VP_SPEED_LIMIT_OFF || vp == VP_SPEED_LIMIT_ON) && value != 0) {
-    dwinWriteU16(vp, 0);
-    const bool en = (vp == VP_SPEED_LIMIT_ON);
-    if (g_plant.speedLimitEn != en) {
-      g_plant.speedLimitEn = en;
-      settingsSave(g_plant);
-    }
     return;
   }
 
@@ -937,14 +936,8 @@ void fsmPollButtons(uint32_t nowMs) {
   if (nowMs - tTarget >= TARGET_POLL_MS) {
     tTarget = nowMs;
     if (g_q == FsmState::Settings) {
-      static uint8_t setIdx = 0;
-      switch (setIdx % 4u) {
-        case 0: dwinRequestReadU32(VP_BRAKE); break;
-        case 1: dwinRequestReadU16(VP_BRAKE_ON_MS); break;
-        case 2: dwinRequestReadU16(VP_BRAKE_OFF_MS); break;
-        default: dwinRequestReadU16(VP_SPEED_LIMIT); break;
-      }
-      setIdx = (uint8_t)(setIdx + 1u);
+      // All four every tick — OK→VP must land in RAM/EEPROM before НАЗАД.
+      requestSettingsReads();
     } else if (g_q != FsmState::Keypad && g_q != FsmState::Error &&
                g_tgtGate == TargetGate::Normal) {
       dwinRequestReadU32(VP_TARGET);
@@ -1086,8 +1079,6 @@ void fsmBegin() {
   g_plant.kbFresh = true;
   g_plant.brakeOnMs = 50;
   g_plant.brakeOffMs = 50;
-  g_plant.speedLimitCms = 0;
-  g_plant.speedLimitEn = false;
   if (!settingsLoad(g_plant)) {
     // First boot / empty flash — keep defaults and seed EEPROM.
     settingsSave(g_plant);
@@ -1097,6 +1088,13 @@ void fsmBegin() {
   writeAllDisplayZeros();
   g_cacheTarget = g_cacheRemain = 0;
   g_cacheProgress = g_cacheSpeed = 0;
+  // Invalidate settings caches so first push always hits the panel.
+  g_cacheBrake = 0xFFFFFFFFu;
+  g_cacheBrakeOn = g_cacheBrakeOff = 0xFFFF;
+  pushSettings();
+  delay(40);
+  g_cacheBrake = 0xFFFFFFFFu;
+  g_cacheBrakeOn = g_cacheBrakeOff = 0xFFFF;
   pushSettings();
   dwinSetPage(PAGE_MAIN);
 }
