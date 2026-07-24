@@ -858,6 +858,12 @@ void fsmOnDwinVp(uint16_t vp, uint32_t value) {
     return;
   }
 
+  if ((vp == VP_SPEED_LIMIT_OFF || vp == VP_SPEED_LIMIT_ON) && value != 0) {
+    dwinWriteU16(vp, 0);
+    g_plant.speedLimitEn = (vp == VP_SPEED_LIMIT_ON);
+    return;
+  }
+
   if ((vp == VP_RESET || vp == VP_ERR_ACK || vp == VP_SETTINGS ||
        vp == VP_SETTINGS_BACK) &&
       value != 0) {
@@ -1068,6 +1074,7 @@ void fsmBegin() {
   g_plant.brakeOnMs = 50;
   g_plant.brakeOffMs = 50;
   g_plant.speedLimitCms = 0;
+  g_plant.speedLimitEn = false;
   encoderClear();
   forceSpeedZero();
   writeAllDisplayZeros();
