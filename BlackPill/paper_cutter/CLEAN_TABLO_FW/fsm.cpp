@@ -166,47 +166,79 @@ static void pushSettings() {
   dwinWriteU16IfChanged(VP_BRAKE_OFF_MS, g_plant.brakeOffMs, g_cacheBrakeOff);
 }
 
-/** Ask panel for all settings VPs (OK may have written them moments ago). */
+/** Ask panel for settings. Brake LONG is read as two U16 (6090/6091):
+ *  some panels answer 0x83 with words=1 for a 2-word request, which made
+ *  MCU see only the high word (0) and never persist brake distance. */
+static uint16_t g_brakeHi = 0;
+static bool g_brakeHiFresh = false;
+
 static void requestSettingsReads() {
-  dwinRequestReadU32(VP_BRAKE);
+  // Do not clear g_brakeHiFresh — low word may still be in flight from prior poll.
+  dwinRequestReadU16(VP_BRAKE);
+  dwinRequestReadU16((uint16_t)(VP_BRAKE + 1u));
   dwinRequestReadU16(VP_BRAKE_ON_MS);
   dwinRequestReadU16(VP_BRAKE_OFF_MS);
 }
 
 /** Pump UART until replies land in applySettingsVp / EEPROM. */
 static void pullSettingsFromPanel(uint32_t waitMs) {
-  requestSettingsReads();
+  // Stagger requests so LONG hi/lo replies are not jammed together.
+  g_brakeHiFresh = false;
+  dwinRequestReadU16(VP_BRAKE);
+  delay(15);
+  dwinPoll(fsmOnDwinVp);
+  dwinRequestReadU16((uint16_t)(VP_BRAKE + 1u));
+  delay(15);
+  dwinPoll(fsmOnDwinVp);
+  dwinRequestReadU16(VP_BRAKE_ON_MS);
+  delay(15);
+  dwinPoll(fsmOnDwinVp);
+  dwinRequestReadU16(VP_BRAKE_OFF_MS);
   const uint32_t t0 = millis();
   while ((millis() - t0) < waitMs) {
     dwinPoll(fsmOnDwinVp);
   }
+  settingsSave(g_plant);
 }
 
 static void applySettingsVp(uint16_t vp, uint32_t value) {
-  bool changed = false;
+  // RAM only while editing — flash once on НАЗАД (see actSettingsBack).
   if (vp == VP_BRAKE) {
     if (value > MAX_METERS) value = MAX_METERS;
-    if (g_plant.brakeM != value) {
-      g_plant.brakeM = value;
-      changed = true;
-    }
+    g_plant.brakeM = value;
     g_cacheBrake = value;
   } else if (vp == VP_BRAKE_ON_MS) {
     if (value > 9999u) value = 9999u;
-    if (g_plant.brakeOnMs != (uint16_t)value) {
-      g_plant.brakeOnMs = (uint16_t)value;
-      changed = true;
-    }
+    g_plant.brakeOnMs = (uint16_t)value;
     g_cacheBrakeOn = (uint16_t)value;
   } else if (vp == VP_BRAKE_OFF_MS) {
     if (value > 9999u) value = 9999u;
-    if (g_plant.brakeOffMs != (uint16_t)value) {
-      g_plant.brakeOffMs = (uint16_t)value;
-      changed = true;
-    }
+    g_plant.brakeOffMs = (uint16_t)value;
     g_cacheBrakeOff = (uint16_t)value;
   }
-  if (changed) settingsSave(g_plant);
+}
+
+static void onSettingsVp(uint16_t vp, uint32_t value) {
+  if (vp == VP_BRAKE) {
+    // First U16 of LONG = high word (or full value if 2-word reply already merged).
+    if (value > 0xFFFFu) {
+      g_brakeHiFresh = false;
+      applySettingsVp(VP_BRAKE, value);
+      return;
+    }
+    g_brakeHi = (uint16_t)value;
+    g_brakeHiFresh = true;
+    return;
+  }
+  if (vp == (uint16_t)(VP_BRAKE + 1u) && g_brakeHiFresh) {
+    const uint32_t full = ((uint32_t)g_brakeHi << 16) | (value & 0xFFFFu);
+    g_brakeHiFresh = false;
+    applySettingsVp(VP_BRAKE, full);
+    return;
+  }
+  if (vp == VP_BRAKE_ON_MS || vp == VP_BRAKE_OFF_MS) {
+    applySettingsVp(vp, value);
+  }
 }
 
 static void pushRemain() {
@@ -531,11 +563,9 @@ static void actSettingsOpen() {
 
 static void actSettingsBack() {
   // VarInput OK writes the panel VP immediately; MCU only sees it via 0x83.
-  // Pull before leaving Settings so a quick НАЗАД cannot skip EEPROM save.
-  pullSettingsFromPanel(250);
-  dwinSetPage(PAGE_MAIN);
-  delay(20);
-  dwinSetPage(PAGE_MAIN);
+  // Pull once, then EEPROM (skipped if unchanged). Pic_Next=0 already left
+  // page 17 — do NOT dwinSetPage(MAIN) here (same layer fight as open).
+  pullSettingsFromPanel(200);
   invalidateCaches();
   dwinWriteU32(VP_TARGET, g_plant.targetM);
   g_cacheTarget = g_plant.targetM;
@@ -618,10 +648,8 @@ void fsmDispatch(const FsmEventData& ev) {
           actSettingsOpen();
           qn = FsmState::Settings;
           break;
-        case FsmEvent::SettingsBack:
-          actSettingsBack();
-          qn = FsmState::Idle;
-          break;
+        // Ignore SettingsBack in Idle — Pic_Next=0 / stale VP must not force
+        // MAIN (was closing settings right after gear + EEPROM storm → PC13 solid).
         default:
           break;
       }
@@ -742,13 +770,16 @@ void fsmDispatch(const FsmEventData& ev) {
           qn = FsmState::Idle;
           break;
         case FsmEvent::Stop:
-          actSettingsBack();
-          actKbCancel();
+          // Leave via MCU page set (Stop has no Pic_Next on page 17).
+          pullSettingsFromPanel(200);
+          dwinSetPage(PAGE_MAIN);
+          forceSpeedZero();
           qn = FsmState::Idle;
           break;
         case FsmEvent::Reset:
+          pullSettingsFromPanel(100);
           actClearPlant();
-          actKbCancel();
+          dwinSetPage(PAGE_MAIN);
           qn = FsmState::Idle;
           break;
         case FsmEvent::SettingsOpen:
@@ -871,14 +902,18 @@ void fsmOnDwinVp(uint16_t vp, uint32_t value) {
     return;
   }
 
-  if (vp == VP_BRAKE || vp == VP_BRAKE_ON_MS || vp == VP_BRAKE_OFF_MS) {
-    applySettingsVp(vp, value);
+  if (vp == VP_BRAKE || vp == (uint16_t)(VP_BRAKE + 1u) || vp == VP_BRAKE_ON_MS ||
+      vp == VP_BRAKE_OFF_MS) {
+    onSettingsVp(vp, value);
     return;
   }
 
-  if ((vp == VP_RESET || vp == VP_ERR_ACK || vp == VP_SETTINGS ||
-       vp == VP_SETTINGS_BACK) &&
-      value != 0) {
+  // Edge-trigger: only fire on 0→nonzero (acceptPress). Re-dispatching every
+  // poll while VP stays 1 closed settings immediately and hammered EEPROM.
+  if (vp == VP_RESET || vp == VP_ERR_ACK || vp == VP_SETTINGS ||
+      vp == VP_SETTINGS_BACK) {
+    const uint32_t now = millis();
+    if (!acceptPress(vp, (uint16_t)value, now)) return;
     dwinWriteU16(vp, 0);
     FsmEventData ev{};
     if (vp == VP_RESET) {
