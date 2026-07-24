@@ -1,6 +1,7 @@
 #include "fsm.h"
 #include "dwin.h"
 #include "enc_tim2.h"
+#include "settings_store.h"
 
 /*
   Encoder Autonics E40S6-1000-3-T-24 + wheel Ø 8 cm
@@ -168,29 +169,37 @@ static void pushSettings() {
 }
 
 static void applySettingsVp(uint16_t vp, uint32_t value) {
+  bool changed = false;
   if (vp == VP_BRAKE) {
     if (value > MAX_METERS) value = MAX_METERS;
-    g_plant.brakeM = value;
+    if (g_plant.brakeM != value) {
+      g_plant.brakeM = value;
+      changed = true;
+    }
     g_cacheBrake = value;
-    return;
-  }
-  if (vp == VP_BRAKE_ON_MS) {
+  } else if (vp == VP_BRAKE_ON_MS) {
     if (value > 9999u) value = 9999u;
-    g_plant.brakeOnMs = (uint16_t)value;
+    if (g_plant.brakeOnMs != (uint16_t)value) {
+      g_plant.brakeOnMs = (uint16_t)value;
+      changed = true;
+    }
     g_cacheBrakeOn = (uint16_t)value;
-    return;
-  }
-  if (vp == VP_BRAKE_OFF_MS) {
+  } else if (vp == VP_BRAKE_OFF_MS) {
     if (value > 9999u) value = 9999u;
-    g_plant.brakeOffMs = (uint16_t)value;
+    if (g_plant.brakeOffMs != (uint16_t)value) {
+      g_plant.brakeOffMs = (uint16_t)value;
+      changed = true;
+    }
     g_cacheBrakeOff = (uint16_t)value;
-    return;
-  }
-  if (vp == VP_SPEED_LIMIT) {
+  } else if (vp == VP_SPEED_LIMIT) {
     if (value > MAX_SPEED_CMS) value = MAX_SPEED_CMS;
-    g_plant.speedLimitCms = (uint16_t)value;
+    if (g_plant.speedLimitCms != (uint16_t)value) {
+      g_plant.speedLimitCms = (uint16_t)value;
+      changed = true;
+    }
     g_cacheSpeedLim = (uint16_t)value;
   }
+  if (changed) settingsSave(g_plant);
 }
 
 static void pushRemain() {
@@ -505,7 +514,7 @@ static void actKbCancel() {
 
 static void actSettingsOpen() {
   forceSpeedZero();
-  // Pic_Next=16 already switched the page. Do NOT call dwinSetPage here —
+  // Pic_Next=17 already switched the page. Do NOT call dwinSetPage here —
   // UART page switch fights DGUS compositing ("settings under main").
   delay(30);
   g_cacheBrake = 0xFFFFFFFFu;
@@ -860,7 +869,11 @@ void fsmOnDwinVp(uint16_t vp, uint32_t value) {
 
   if ((vp == VP_SPEED_LIMIT_OFF || vp == VP_SPEED_LIMIT_ON) && value != 0) {
     dwinWriteU16(vp, 0);
-    g_plant.speedLimitEn = (vp == VP_SPEED_LIMIT_ON);
+    const bool en = (vp == VP_SPEED_LIMIT_ON);
+    if (g_plant.speedLimitEn != en) {
+      g_plant.speedLimitEn = en;
+      settingsSave(g_plant);
+    }
     return;
   }
 
@@ -1075,6 +1088,10 @@ void fsmBegin() {
   g_plant.brakeOffMs = 50;
   g_plant.speedLimitCms = 0;
   g_plant.speedLimitEn = false;
+  if (!settingsLoad(g_plant)) {
+    // First boot / empty flash — keep defaults and seed EEPROM.
+    settingsSave(g_plant);
+  }
   encoderClear();
   forceSpeedZero();
   writeAllDisplayZeros();

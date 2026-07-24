@@ -75,7 +75,7 @@ static constexpr uint16_t VP_KB_DEL = 0x60AB;
 static constexpr uint16_t VP_KB_OK = 0x60AC;
 static constexpr uint16_t VP_KB_CANCEL = 0x60AD;
 
-// Settings (page 16 VarInput → keyboard page 17). 6090 is LONG (4 B).
+// Settings (page 17 list → keyboard page 18). 6090 is LONG (4 B).
 static constexpr uint16_t VP_BRAKE = 0x6090;          // м, U32
 static constexpr uint16_t VP_BRAKE_ON_MS = 0x6094;    // ШИМ «1» мс
 static constexpr uint16_t VP_BRAKE_OFF_MS = 0x6096;   // ШИМ «0» мс
@@ -90,8 +90,8 @@ static constexpr uint16_t PAGE_ERR_NO_ENC = 12;
 static constexpr uint16_t PAGE_ERR_NO_TARGET = 13;
 static constexpr uint16_t PAGE_ERR_SPEED_JUMP = 14;
 static constexpr uint16_t PAGE_ERR_CHANNEL = 15;
-static constexpr uint16_t PAGE_SETTINGS = 16;
-static constexpr uint16_t PAGE_SETTINGS_EDIT = 17;
+static constexpr uint16_t PAGE_SETTINGS = 17;
+static constexpr uint16_t PAGE_SETTINGS_EDIT = 18;
 // Legacy alias
 static constexpr uint16_t PAGE_ERROR = PAGE_ERR_REVERSE;
 
