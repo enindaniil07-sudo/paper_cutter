@@ -505,9 +505,9 @@ static void actKbCancel() {
 
 static void actSettingsOpen() {
   forceSpeedZero();
-  // Pic_Next=16 already switches page; UART setPage can fight compositing.
+  // Pic_Next=16 already switched the page. Do NOT call dwinSetPage here —
+  // UART page switch fights DGUS compositing ("settings under main").
   delay(30);
-  dwinSetPage(PAGE_SETTINGS);
   g_cacheBrake = 0xFFFFFFFFu;
   g_cacheBrakeOn = g_cacheBrakeOff = g_cacheSpeedLim = 0xFFFF;
   pushSettings();
