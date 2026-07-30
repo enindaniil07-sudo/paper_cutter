@@ -23,3 +23,4 @@
 | Расстояние торможения, м | 6090 | ArtText LONG на стр.17 + VarInput→18 |
 | Время тормоз (1), мс | 6094 | ArtText + VarInput→18 |
 | Время отпуск (0), мс | 6096 | ArtText + VarInput→18 |
+| Инверсия энкодера | 6098 | BitButton INV (залипание) + IconShow 27.icl |

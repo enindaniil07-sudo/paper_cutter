@@ -2,14 +2,15 @@
 """
 CLEAN_TABLO show patch — DGUS Save->Generate container is sacred.
 
-1) Insert IconShow VP6030 into page0 (shift later widgets, fix pointers)
+1) Insert Process Bar 0x5A23 VP6030 into page0 (shift later widgets, fix pointers)
 2) LONG32/UINT16 + white digits / Icon0=30 on ArtText
-3) If DGUS put ArtText on page17 — rewrite to 3 settings (no speed limit)
+3) If DGUS put ArtText on page17 — rewrite settings + invert IconShow
 4) page16/18 stay EMPTY at FF-sentinel (never point empty→MAIN 0x4000)
 """
 from __future__ import annotations
 
 import argparse
+import json
 import struct
 from pathlib import Path
 
@@ -18,6 +19,14 @@ PAYLOAD = 0x4000
 
 ART_VAR_LONG32 = 1
 ART_VAR_UINT16 = 5
+
+# progress_bar in layout.json
+PROGRESS_XS, PROGRESS_YS = 16, 194
+PROGRESS_XE, PROGRESS_YE = 783, 215  # x+w-1, y+h-1
+
+
+def rgb565(r: int, g: int, b: int) -> int:
+    return ((r * 31 // 255) << 11) | ((g * 63 // 255) << 5) | (b * 31 // 255)
 
 
 def put_entry(s: bytearray, page: int, count: int, ptr: int) -> None:
@@ -33,24 +42,59 @@ def get_entry(s: bytes, page: int) -> tuple[int, int]:
     return s[o] | (s[o + 1] << 8), (s[o + 2] << 8) | s[o + 3]
 
 
-def pack_icon_progress() -> bytes:
+def pack_process_bar() -> bytes:
+    """Process Bar 0x5A23 — VP 6030 0..100, solid fill (no JPEG IconShow glitches)."""
+    rec = bytearray(32)
+    struct.pack_into(
+        ">HHHHHHHH",
+        rec,
+        0,
+        0x5A23,
+        0x5140,
+        0x000D,
+        0x6030,
+        PROGRESS_XS,
+        PROGRESS_YS,
+        PROGRESS_XE,
+        PROGRESS_YE,
+    )
+    struct.pack_into(
+        ">HHH",
+        rec,
+        16,
+        rgb565(40, 48, 64),   # border
+        rgb565(72, 196, 182), # foreground (aqua)
+        rgb565(16, 20, 28),   # background
+    )
+    struct.pack_into(">hh", rec, 22, 100, 0)  # V_Max, V_Min
+    # Mode: show border + fill back, no % return; Direction=Right; integer
+    rec[26] = 0x00
+    rec[27] = 0x00
+    rec[28] = 0x00
+    rec[29] = 0x00
+    struct.pack_into(">H", rec, 30, 0xFFFF)  # VP_RT unused
+    return bytes(rec)
+
+
+def pack_invert_icon(*, x: int, y: int) -> bytes:
+    """IconShow 0x5A00 — VP 6098 0/1 → icons 0/1 in 27.icl (sticky invert button)."""
     rec = bytearray(32)
     struct.pack_into(
         ">HHHHHHHH",
         rec,
         0,
         0x5A00,
-        0x5140,
+        0x51C0,
         0x000A,
-        0x6030,
-        16,
-        194,
-        0,
-        100,
+        0x6098,
+        x & 0xFFFF,
+        y & 0xFFFF,
+        0,  # V_Min
+        1,  # V_Max
     )
-    struct.pack_into(">HH", rec, 16, 70, 170)
-    rec[20] = 26
-    rec[21] = 0
+    struct.pack_into(">HH", rec, 16, 0, 1)  # Icon_Min / Icon_Max
+    rec[20] = 27  # Icon_lib
+    rec[21] = 1  # Mode: opaque (cover idle button art)
     rec[22] = 0
     rec[23] = 255
     rec[24] = 255
@@ -91,26 +135,36 @@ def _shift_ptrs(s: bytearray, at_or_after: int, delta: int) -> None:
             put_entry(s, p, cnt, ptr + delta)
 
 
-def ensure_progress_icon(s: bytearray) -> None:
+def ensure_progress_bar(s: bytearray) -> None:
+    """Ensure page0 has Process Bar VP6030 (replace legacy IconShow if present)."""
     cnt0, ptr0 = get_entry(s, 0)
     if ptr0 != PAYLOAD:
         raise SystemExit(f"unexpected page0 ptr 0x{ptr0:04X}")
 
+    bar = pack_process_bar()
     for i in range(cnt0):
         off = ptr0 + i * 32
-        if s[off] == 0x5A and s[off + 1] == 0x00:
-            if struct.unpack_from(">H", s, off + 6)[0] == 0x6030:
-                print(f"  page0 already has IconShow VP6030 @0x{off:04X}")
-                return
+        code = struct.unpack_from(">H", s, off)[0]
+        vp = struct.unpack_from(">H", s, off + 6)[0]
+        if vp != 0x6030:
+            continue
+        if code == 0x5A23:
+            s[off : off + 32] = bar
+            print(f"  page0 Process Bar VP6030 refreshed @0x{off:04X}")
+            return
+        if code == 0x5A00:
+            s[off : off + 32] = bar
+            print(f"  page0 IconShow VP6030 → Process Bar @0x{off:04X}")
+            return
 
     if cnt0 != 3:
         raise SystemExit(f"expected page0 cnt=3 (DGUS), got {cnt0}")
 
     insert_at = PAYLOAD + 3 * 32
-    s[insert_at:insert_at] = pack_icon_progress()
+    s[insert_at:insert_at] = bar
     _shift_ptrs(s, insert_at, 32)
     put_entry(s, 0, 4, PAYLOAD)
-    print(f"  inserted IconShow at 0x{insert_at:04X}; shifted ptrs >= insert")
+    print(f"  inserted Process Bar at 0x{insert_at:04X}; shifted ptrs >= insert")
 
 
 def patch_arttext_widget(
@@ -160,17 +214,19 @@ MAIN_ART_XY = {
 }
 
 
-def rewrite_settings_page17(s: bytearray, ptr: int) -> None:
+def rewrite_settings_page17(s: bytearray, ptr: int, *, inv_x: int, inv_y: int) -> None:
     blob = bytearray()
     for sp, vp, n_int, vtype, x, y in SETTINGS_ART:
         blob += pack_arttext(sp, vp, x, y, n_int=n_int, var_type=vtype, icon0=50, lib=25)
         print(f"  ArtText VP {vp:04X} @({x},{y}) N={n_int} type={vtype} lib=25 icon0=50")
+    blob += pack_invert_icon(x=inv_x, y=inv_y)
+    print(f"  IconShow VP 6098 @({inv_x},{inv_y}) lib=27 icons 0/1 (invert latch)")
     need = ptr + len(blob) + 32
     if len(s) < need:
         s.extend(b"\x00" * (need - len(s)))
     s[ptr : ptr + len(blob)] = blob
     s[ptr + len(blob) : ptr + len(blob) + 32] = b"\xff" * 32
-    put_entry(s, 17, 3, ptr)
+    put_entry(s, 17, 4, ptr)
 
 
 def patch_vartypes(s: bytearray) -> int:
@@ -240,15 +296,19 @@ def main() -> int:
     has_settings = cnt17 > 0
     print(f"Base: {pristine} ({len(s)} bytes, max={s[9]}, page17 cnt={cnt17} ptr=0x{ptr17:04X})")
 
-    print("Progress IconShow:")
-    ensure_progress_icon(s)
+    print("Progress Process Bar:")
+    ensure_progress_bar(s)
 
     cnt17, ptr17 = get_entry(s, 17)
     print(f"After icon: page17 cnt={cnt17} ptr=0x{ptr17:04X}")
 
+    layout = json.loads((root / "design" / "layout.json").read_text(encoding="utf-8"))
+    inv = layout["controls"]["btn_enc_invert"]
+    inv_x, inv_y = int(inv["x"]), int(inv["y"])
+
     if has_settings and cnt17 > 0:
-        print("Settings ArtText page17 (3 params, large wells):")
-        rewrite_settings_page17(s, ptr17)
+        print("Settings ArtText page17 + invert IconShow:")
+        rewrite_settings_page17(s, ptr17, inv_x=inv_x, inv_y=inv_y)
         cnt17, ptr17 = get_entry(s, 17)
 
     print("VarTypes / glyph / color:")
@@ -259,9 +319,9 @@ def main() -> int:
         cnt, ptr = get_entry(s, p)
         if cnt > 0:
             used_end = max(used_end, ptr + cnt * 32)
-    # Include cleared 4th slot after settings widgets.
+    # Include cleared slot after settings widgets (3 ArtText + IconShow).
     if has_settings:
-        used_end = max(used_end, ptr17 + 4 * 32)
+        used_end = max(used_end, ptr17 + 5 * 32)
     sentinel = used_end
     if sentinel % 32:
         sentinel += 32 - (sentinel % 32)
@@ -269,9 +329,9 @@ def main() -> int:
     del s[sentinel + 32 :]
 
     keep = {0, 10}
-    if has_settings and cnt17 == 3:
+    if has_settings and cnt17 == 4:
         keep.add(17)
-        print(f"Keeping page17 ArtText @0x{ptr17:04X} cnt=3")
+        print(f"Keeping page17 settings @0x{ptr17:04X} cnt=4")
     else:
         put_entry(s, 17, 0, sentinel)
         print("page17 empty (no DGUS ArtText in base)")
@@ -296,7 +356,7 @@ def main() -> int:
     if 17 in keep:
         c, p = get_entry(s, 17)
         vps = [struct.unpack_from(">H", s, p + i * 32 + 6)[0] for i in range(c)]
-        if c != 3 or set(vps) != {0x6090, 0x6094, 0x6096}:
+        if c != 4 or set(vps) != {0x6090, 0x6094, 0x6096, 0x6098}:
             raise SystemExit(f"page17 bad: cnt={c} vps={vps}")
 
     out.write_bytes(s)

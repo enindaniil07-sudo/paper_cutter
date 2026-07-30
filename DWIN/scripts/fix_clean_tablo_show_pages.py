@@ -77,8 +77,9 @@ def pack_arttext(
 
 
 def pack_icon_progress(*, vp: int, x: int, y: int, sp: int) -> bytes:
-    """IconShow 0x5A00 — VP 0..100 → icons 70..170 in 26.icl."""
+    """Deprecated alias — prefer Process Bar; kept for older callers."""
     rec = bytearray(32)
+    # Fall back still packs IconShow; CLEAN_TABLO uses form_clean_tablo_show_pages Process Bar.
     struct.pack_into(
         ">HHHHHHHH",
         rec,
@@ -89,13 +90,13 @@ def pack_icon_progress(*, vp: int, x: int, y: int, sp: int) -> bytes:
         vp & 0xFFFF,
         x & 0xFFFF,
         y & 0xFFFF,
-        0,  # V_Min
-        100,  # V_Max
+        0,
+        100,
     )
     struct.pack_into(">HH", rec, 16, PROGRESS_ICON_MIN, PROGRESS_ICON_MAX)
-    rec[20] = 26  # Icon_lib
-    rec[21] = 0  # Mode
-    rec[22] = 0  # BackMode
+    rec[20] = 26
+    rec[21] = 1  # opaque — transparency caused garbage/disappear on some %
+    rec[22] = 0
     rec[23] = 255
     rec[24] = 255
     rec[25] = 0

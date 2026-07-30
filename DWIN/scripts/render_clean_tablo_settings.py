@@ -175,13 +175,25 @@ def main() -> int:
     _sync(path17, root / "17.bmp")
     p17.save(root / "source" / "page17_settings.png")
 
-    # page19 = Pic_On for ИНВЕРСИЯ (BitButton switch ON) — same layout, green button
+    # page19 = green ON look (kept for reference / optional Pic_On)
     p19 = render_settings(w, h, layout, invert_on=True)
     path19 = out / "19.bmp"
     p19.save(path19)
     _sync(path19, root / "DWIN_SET" / "19.bmp")
     _sync(path19, root / "19.bmp")
     p19.save(root / "source" / "page19_invert_on.png")
+
+    # Variable Icon tiles (27.icl): sticky ON/OFF for VP 6098
+    inv = layout["controls"]["btn_enc_invert"]
+    ix, iy = int(inv["x"]), int(inv["y"])
+    iw, ih = int(inv["w"]), int(inv["h"])
+    icon_dir = out / "invert_btn"
+    icon_dir.mkdir(parents=True, exist_ok=True)
+    for name, src in (("00.bmp", p17), ("01.bmp", p19)):
+        tile = src.crop((ix, iy, ix + iw, iy + ih))
+        tip = icon_dir / name
+        tile.save(tip)
+        _sync(tip, root / "DWIN_SET" / "invert_btn" / name)
 
     # page18 = settings edit keypad
     p18 = render_edit(w, h, layout)
@@ -191,7 +203,17 @@ def main() -> int:
     _sync(path18, root / "18.bmp")
     p18.save(root / "source" / "page18_settings_edit.png")
 
-    print("Wrote", path17, "(settings),", path19, "(invert ON),", path18, "(edit)")
+    print(
+        "Wrote",
+        path17,
+        "(settings),",
+        path19,
+        "(invert ON),",
+        path18,
+        "(edit),",
+        icon_dir,
+        "(icon tiles)",
+    )
     return 0
 
 

@@ -241,8 +241,8 @@ def main() -> int:
         kb_page=PAGE_EDIT,
         cursor=kb_cur,
     )
-    # Encoder direction invert — switch BitButton; Pic_On=19 = green ON state.
-    out += pack_bit_button(PAGE_SET, c["btn_enc_invert"], 0x6098, 19, -1, adj_mode=2)
+    # Encoder invert — INV (latch bit0). Visual ON/OFF = IconShow VP6098 in 14Show (27.icl).
+    out += pack_bit_button(PAGE_SET, c["btn_enc_invert"], 0x6098, -1, -1, adj_mode=2)
 
     for key, code in SET_EDIT_KEYS:
         out += pack_ascii_key(PAGE_EDIT, c[key], code)

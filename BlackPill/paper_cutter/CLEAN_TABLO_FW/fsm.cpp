@@ -356,9 +356,14 @@ static void applySettingsVp(uint16_t vp, uint32_t value) {
     g_plant.brakeOffMs = (uint16_t)value;
     g_cacheBrakeOff = (uint16_t)value;
   } else if (vp == VP_ENC_INVERT) {
-    g_plant.encInvert = (value != 0) ? 1u : 0u;
-    g_encInvertFlag = g_plant.encInvert;
-    g_cacheEncInvert = g_plant.encInvert;
+    // Normalize to 0/1 so IconShow (latch graphic) and bit0 stay in sync.
+    const uint16_t bit = (value != 0) ? 1u : 0u;
+    g_plant.encInvert = (uint8_t)bit;
+    g_encInvertFlag = (uint8_t)bit;
+    if (g_cacheEncInvert != bit) {
+      g_cacheEncInvert = bit;
+      dwinWriteU16(VP_ENC_INVERT, bit);
+    }
   }
 }
 
@@ -709,6 +714,7 @@ static void actSettingsOpen() {
   delay(30);
   g_cacheBrake = 0xFFFFFFFFu;
   g_cacheBrakeOn = g_cacheBrakeOff = 0xFFFF;
+  g_cacheEncInvert = 0xFFFF;
   pushSettings();
 }
 

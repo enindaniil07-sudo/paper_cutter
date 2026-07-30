@@ -79,7 +79,7 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & python (Join-Path $Repo "scripts\pack_paper_cutter_icl.py") --project $Root --which small
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-# Progress: Process Bar 0x5A23 on VP 6030 (optional IconShow frames kept for fallback)
+# Progress: Process Bar 0x5A23 on VP 6030 (IconShow frames optional / unused)
 & python (Join-Path $Repo "scripts\gen_paper_cutter_progress.py") --project $Root
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & python (Join-Path $Repo "scripts\pack_paper_cutter_icl.py") --project $Root --which progress
@@ -101,6 +101,10 @@ Remove-Item (Join-Path $dstSet "04.bmp") -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $Root "04.bmp") -Force -ErrorAction SilentlyContinue
 
 & python (Join-Path $Repo "scripts\pack_dwin_set_screen_to_icl.py") --project $Root --icl-id 32 --bmps "00.bmp,01.bmp,02.bmp,10.bmp,11.bmp,12.bmp,13.bmp,14.bmp,15.bmp,16.bmp,17.bmp,18.bmp,19.bmp" --quality 92
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+# Sticky ИНВЕРСИЯ icons (VP 6098 IconShow)
+& python (Join-Path $Repo "scripts\images_to_icl.py") -o (Join-Path $dstSet "27.icl") --icl-id 27 --quality 95 --align-head-kb 32 --lib-size-kb 256 --chroma 444 (Join-Path $Root "image\invert_btn\00.bmp") (Join-Path $Root "image\invert_btn\01.bmp")
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Remove-Item (Join-Path $dstSet "03.bmp") -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $Root "03.bmp") -Force -ErrorAction SilentlyContinue
