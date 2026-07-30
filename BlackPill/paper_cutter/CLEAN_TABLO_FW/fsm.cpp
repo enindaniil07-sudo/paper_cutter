@@ -1,7 +1,9 @@
 #include "fsm.h"
 #include "dwin.h"
+#include "dwin_buzz.h"
 #include "enc_tim2.h"
 #include "settings_store.h"
+#include "brake_relay.h"
 
 /*
   Encoder Autonics E40S6-1000-3-T-24 + wheel Ø 8 cm
@@ -20,6 +22,7 @@ static uint32_t g_lastPulseMs = 0;
 static bool g_encSeenThisRun = false;
 static uint32_t g_encCntWatch = 0;
 static bool g_encActivity = false;  // pulses this poll (for auto-Run)
+static uint8_t g_encInvertFlag = 0;  // mirror plant.encInvert for encoderPollHw
 
 static void encoderAttach() { encTim2Begin(); }
 
@@ -39,7 +42,13 @@ static void encoderClearWindow() {
 
 /** Poll TIM2: accumulate path, speed window, reverse streak. */
 static void encoderPollHw(uint32_t nowMs) {
-  const EncTim2Delta d = encTim2Poll();
+  EncTim2Delta d = encTim2Poll();
+  // Инверсия направления из настроек (эквивалент перепутать A/B).
+  if (g_encInvertFlag) {
+    const uint32_t tmp = d.forward;
+    d.forward = d.reverse;
+    d.reverse = tmp;
+  }
   // d.overflow: UIF handled inside encTim2Poll (CNT reset). Soft g_nm untouched by that.
   g_encActivity = false;
 
@@ -113,12 +122,14 @@ static uint16_t g_cacheKb = 0xFFFF;
 static uint32_t g_cacheBrake = 0xFFFFFFFFu;
 static uint16_t g_cacheBrakeOn = 0xFFFF;
 static uint16_t g_cacheBrakeOff = 0xFFFF;
+static uint16_t g_cacheEncInvert = 0xFFFF;
 
 static void invalidateCaches() {
   g_cacheTarget = g_cacheRemain = 0xFFFFFFFFu;
   g_cacheSpeed = g_cacheProgress = g_cacheKb = 0xFFFF;
   g_cacheBrake = 0xFFFFFFFFu;
   g_cacheBrakeOn = g_cacheBrakeOff = 0xFFFF;
+  g_cacheEncInvert = 0xFFFF;
 }
 
 static uint32_t targetCm() { return g_plant.targetM * 100u; }
@@ -127,6 +138,130 @@ static uint32_t remainMeters() {
   const uint32_t doneM = g_plant.travelM / 100u;
   if (g_plant.targetM <= doneM) return 0;
   return g_plant.targetM - doneM;
+}
+
+/** Защёлка: вошли в зону торможения → ШИМ, пока скорость ≠ 0. */
+static bool g_brakeLatched = false;
+
+static bool brakeShaftMoving(uint32_t nowMs) {
+  return (int32_t)(nowMs - g_lastPulseMs) < (int32_t)BRAKE_HOLD_IDLE_MS;
+}
+
+static bool brakeSpeedIsZero() {
+  return g_speedEma == 0 && g_plant.speedCms == 0;
+}
+
+/** Зона торможения: после входа ШИМ, пока скорость > 0 (и есть импульсы). */
+static bool brakeShouldArm(uint32_t nowMs) {
+  if (g_plant.brakeM == 0) {
+    g_brakeLatched = false;
+    return false;
+  }
+
+  if (g_q == FsmState::Run && g_plant.targetM > 0 &&
+      remainMeters() <= g_plant.brakeM) {
+    g_brakeLatched = true;
+  }
+
+  if (g_q == FsmState::Error &&
+      (g_err == FsmError::Reverse || g_err == FsmError::BrakeIneffective)) {
+    g_brakeLatched = true;
+  }
+
+  if (!g_brakeLatched) return false;
+
+  // Нулевая скорость на дисплее/EMA → сразу гасим импульсы реле.
+  if (brakeSpeedIsZero()) {
+    g_brakeLatched = false;
+    return false;
+  }
+
+  if (!brakeShaftMoving(nowMs)) {
+    g_brakeLatched = false;
+    return false;
+  }
+  return true;
+}
+
+/** Реле PB0: импульсы on/off, пока защёлка и вал ещё крутится. */
+static void updateBrakeRelay(uint32_t nowMs) {
+  brakeRelayTick(nowMs, brakeShouldArm(nowMs), g_plant.brakeOnMs, g_plant.brakeOffMs);
+}
+
+// --- Brake effectiveness (стр. 16): раз в 1 с, пока зона/защёлка живы ---
+static bool g_brakeEffArmed = false;
+static uint32_t g_brakeEffLastMs = 0;
+static uint32_t g_brakeEffLastCms = 0;
+
+static void brakeEffReset() {
+  g_brakeEffArmed = false;
+  g_brakeEffLastMs = 0;
+  g_brakeEffLastCms = 0;
+}
+
+static uint32_t brakeEffSpeedCms() {
+  uint32_t v = g_speedEma;
+  if ((uint32_t)g_plant.speedCms > v) v = g_plant.speedCms;
+  return v;
+}
+
+/** Зона торможения по пути или уже защёлкнутый докат — для контроля, не для реле. */
+static bool brakeEffZoneActive() {
+  if (g_plant.brakeM == 0 || g_plant.targetM == 0) return false;
+  if (g_brakeLatched) return true;
+  if (g_q == FsmState::Run && remainMeters() <= g_plant.brakeM) return true;
+  if (g_q == FsmState::Error &&
+      (g_err == FsmError::Reverse || g_err == FsmError::BrakeIneffective)) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Постоянный контроль: каждые BRAKE_EFF_PERIOD_MS, пока в зоне торможения.
+ * true → скорость за секунду не упала.
+ */
+static bool brakeEffPoll(uint32_t nowMs) {
+  if (!BRAKE_EFF_ENABLE) {
+    brakeEffReset();
+    return false;
+  }
+  // Не привязано к реле: реле может уже быть LOW при speed=0, зона ещё активна.
+  if (!brakeEffZoneActive()) {
+    brakeEffReset();
+    return false;
+  }
+
+  const uint32_t v = brakeEffSpeedCms();
+
+  // Стоим — не ошибка; базу сбрасываем, чтобы при новом разгоне снова ловить.
+  if (v < (uint32_t)BRAKE_EFF_MIN_CMS) {
+    g_brakeEffArmed = false;
+    g_brakeEffLastCms = 0;
+    g_brakeEffLastMs = nowMs;
+    return false;
+  }
+
+  if (!g_brakeEffArmed) {
+    g_brakeEffArmed = true;
+    g_brakeEffLastMs = nowMs;
+    g_brakeEffLastCms = v;
+    return false;
+  }
+
+  if ((int32_t)(nowMs - g_brakeEffLastMs) < (int32_t)BRAKE_EFF_PERIOD_MS) {
+    return false;
+  }
+
+  g_brakeEffLastMs = nowMs;
+
+  if (v < g_brakeEffLastCms) {
+    g_brakeEffLastCms = v;
+    return false;
+  }
+
+  // Не упала за секунду → ошибка. Монитор не глушим: после ИСПРАВИТЬ сброс.
+  return true;
 }
 
 static uint16_t calcProgressPct() {
@@ -164,6 +299,7 @@ static void pushSettings() {
   dwinWriteU32IfChanged(VP_BRAKE, min(g_plant.brakeM, (uint32_t)MAX_METERS), g_cacheBrake);
   dwinWriteU16IfChanged(VP_BRAKE_ON_MS, g_plant.brakeOnMs, g_cacheBrakeOn);
   dwinWriteU16IfChanged(VP_BRAKE_OFF_MS, g_plant.brakeOffMs, g_cacheBrakeOff);
+  dwinWriteU16IfChanged(VP_ENC_INVERT, g_plant.encInvert ? 1u : 0u, g_cacheEncInvert);
 }
 
 /** Ask panel for settings. Brake LONG is read as two U16 (6090/6091):
@@ -178,6 +314,7 @@ static void requestSettingsReads() {
   dwinRequestReadU16((uint16_t)(VP_BRAKE + 1u));
   dwinRequestReadU16(VP_BRAKE_ON_MS);
   dwinRequestReadU16(VP_BRAKE_OFF_MS);
+  dwinRequestReadU16(VP_ENC_INVERT);
 }
 
 /** Pump UART until replies land in applySettingsVp / EEPROM. */
@@ -194,6 +331,9 @@ static void pullSettingsFromPanel(uint32_t waitMs) {
   delay(15);
   dwinPoll(fsmOnDwinVp);
   dwinRequestReadU16(VP_BRAKE_OFF_MS);
+  delay(15);
+  dwinPoll(fsmOnDwinVp);
+  dwinRequestReadU16(VP_ENC_INVERT);
   const uint32_t t0 = millis();
   while ((millis() - t0) < waitMs) {
     dwinPoll(fsmOnDwinVp);
@@ -215,6 +355,10 @@ static void applySettingsVp(uint16_t vp, uint32_t value) {
     if (value > 9999u) value = 9999u;
     g_plant.brakeOffMs = (uint16_t)value;
     g_cacheBrakeOff = (uint16_t)value;
+  } else if (vp == VP_ENC_INVERT) {
+    g_plant.encInvert = (value != 0) ? 1u : 0u;
+    g_encInvertFlag = g_plant.encInvert;
+    g_cacheEncInvert = g_plant.encInvert;
   }
 }
 
@@ -236,7 +380,7 @@ static void onSettingsVp(uint16_t vp, uint32_t value) {
     applySettingsVp(VP_BRAKE, full);
     return;
   }
-  if (vp == VP_BRAKE_ON_MS || vp == VP_BRAKE_OFF_MS) {
+  if (vp == VP_BRAKE_ON_MS || vp == VP_BRAKE_OFF_MS || vp == VP_ENC_INVERT) {
     applySettingsVp(vp, value);
   }
 }
@@ -305,7 +449,8 @@ FsmState fsmState() { return g_q; }
 const PlantData& fsmPlant() { return g_plant; }
 
 bool fsmSpeedLive() {
-  return g_q == FsmState::Idle || g_q == FsmState::Run;
+  // Пока тормоз удерживает вал после Stopped — продолжаем считать EMA.
+  return g_q == FsmState::Idle || g_q == FsmState::Run || g_brakeLatched;
 }
 
 uint16_t fsmLedPeriodMs() {
@@ -320,6 +465,7 @@ static uint16_t pageForError(FsmError e) {
     case FsmError::NoTarget: return PAGE_ERR_NO_TARGET;
     case FsmError::SpeedJump: return PAGE_ERR_SPEED_JUMP;
     case FsmError::ChannelFault: return PAGE_ERR_CHANNEL;
+    case FsmError::BrakeIneffective: return PAGE_ERR_BRAKE;
     default: return PAGE_ERR_REVERSE;
   }
 }
@@ -329,6 +475,7 @@ static void actShowError(FsmError kind) {
   encoderClearWindow();
   g_err = kind;
   const uint16_t page = pageForError(kind);
+  dwinBuzzError();
   dwinSetPage(page);
   delay(20);
   dwinSetPage(page);
@@ -343,6 +490,7 @@ static void actDismissError() {
   g_chASeen = false;
   g_chBSeen = false;
   g_chHaveLevel = false;
+  brakeEffReset();
   encoderClearWindow();
   dwinWriteU16(VP_ERR_ACK, 0);
   dwinSetPage(PAGE_MAIN);
@@ -450,6 +598,8 @@ static void actClearPlant() {
   g_speedEma = 0;
   g_speedShown = true;
   forceSpeedZero();
+  g_brakeLatched = false;
+  brakeEffReset();
   invalidateCaches();
 
   g_tgtGate = TargetGate::Resetting;
@@ -482,6 +632,7 @@ static void actPrepareRun() {
   forceSpeedZero();
   const uint32_t t = millis();
   channelReset(t);
+  brakeEffReset();
   g_runStartMs = t;
   // Same stamp as run start; fsmMotionTick may still see an older nowMs this
   // loop — no-signal check must tolerate lastPulse >= nowMs (see below).
@@ -590,7 +741,20 @@ static bool tryArmRunFromMotion() {
 }
 
 void fsmDispatch(const FsmEventData& ev) {
+  // СТОП / достижение цели — троекратный пик (зуммер панели).
+  if (ev.type == FsmEvent::Stop || ev.type == FsmEvent::TargetDone) {
+    dwinBuzzStopTriple();
+  }
+
   // Ошибки датчика — только в Run (вал уже крутится).
+  // Отказ тормоза — ещё и в Stopped (докат после ЗАДАНО, ШИМ ещё идёт).
+  if (g_q == FsmState::Run || g_q == FsmState::Stopped) {
+    if (ev.type == FsmEvent::BrakeIneffectiveDetect) {
+      actShowError(FsmError::BrakeIneffective);
+      g_q = FsmState::Error;
+      return;
+    }
+  }
   if (g_q == FsmState::Run) {
     if (ev.type == FsmEvent::ReverseDetect) {
       actShowError(FsmError::Reverse);
@@ -696,10 +860,14 @@ void fsmDispatch(const FsmEventData& ev) {
 
     case FsmState::Run:
       switch (ev.type) {
-        case FsmEvent::Stop:
         case FsmEvent::TargetDone:
-          if (ev.type == FsmEvent::TargetDone) actTargetClamp();
-          actFreezeSpeed();
+          // Не обнулять скорость: докат + контроль тормоза нуждаются в EMA,
+          // пока энкодер крутится. ШИМ держится защёлкой до скорости 0.
+          actTargetClamp();
+          qn = FsmState::Stopped;
+          break;
+        case FsmEvent::Stop:
+          if (!g_brakeLatched) actFreezeSpeed();
           qn = FsmState::Stopped;
           break;
         case FsmEvent::Reset:
@@ -711,7 +879,7 @@ void fsmDispatch(const FsmEventData& ev) {
           qn = FsmState::Keypad;
           break;
         case FsmEvent::SettingsOpen:
-          actFreezeSpeed();
+          if (!g_brakeLatched) actFreezeSpeed();
           actSettingsOpen();
           qn = FsmState::Settings;
           break;
@@ -723,7 +891,7 @@ void fsmDispatch(const FsmEventData& ev) {
     case FsmState::Stopped:
       switch (ev.type) {
         case FsmEvent::Stop:
-          actFreezeSpeed();
+          if (!g_brakeLatched) actFreezeSpeed();
           qn = FsmState::Stopped;
           break;
         case FsmEvent::Reset:
@@ -903,7 +1071,7 @@ void fsmOnDwinVp(uint16_t vp, uint32_t value) {
   }
 
   if (vp == VP_BRAKE || vp == (uint16_t)(VP_BRAKE + 1u) || vp == VP_BRAKE_ON_MS ||
-      vp == VP_BRAKE_OFF_MS) {
+      vp == VP_BRAKE_OFF_MS || vp == VP_ENC_INVERT) {
     onSettingsVp(vp, value);
     return;
   }
@@ -999,6 +1167,11 @@ void fsmMotionTick(uint32_t nowMs) {
 
   if (g_q == FsmState::Error) {
     forceSpeedZero();
+    if (g_err == FsmError::Reverse || g_err == FsmError::BrakeIneffective) {
+      updateBrakeRelay(nowMs);
+    } else {
+      brakeRelayOff();
+    }
     return;
   }
 
@@ -1012,18 +1185,23 @@ void fsmMotionTick(uint32_t nowMs) {
   if (rev && g_q == FsmState::Run) {
     FsmEventData ev{FsmEvent::ReverseDetect, 0};
     fsmDispatch(ev);
-    if (g_q == FsmState::Error) return;
+    if (g_q == FsmState::Error) {
+      // Реверс: не гасить тормоз — дальше updateBrakeRelay / Error+Reverse.
+      updateBrakeRelay(nowMs);
+      return;
+    }
   }
 
   // Обрыв A/B: IDR PA0/PA1 + асимметрия фронтов при живом TIM.
   if (ENC_CH_FAULT_ENABLE && g_q == FsmState::Run && channelPollFault(nowMs)) {
     FsmEventData ev{FsmEvent::ChannelFaultDetect, 0};
     fsmDispatch(ev);
+    brakeRelayOff();
     return;
   }
 
-  // Смена CNT = импульсы есть
-  if (g_q == FsmState::Run) {
+  // Смена CNT = импульсы есть (и в Stopped при докате с тормозом).
+  if (g_q == FsmState::Run || g_brakeLatched) {
     const uint32_t cnt = encTim2Cnt();
     if (cnt != g_encCntWatch) {
       g_encCntWatch = cnt;
@@ -1040,6 +1218,7 @@ void fsmMotionTick(uint32_t nowMs) {
     if (quietMs >= (int32_t)ENC_NO_SIGNAL_MS) {
       FsmEventData ev{FsmEvent::EncLoss, 0};
       fsmDispatch(ev);
+      brakeRelayOff();
       return;
     }
   }
@@ -1078,6 +1257,7 @@ void fsmMotionTick(uint32_t nowMs) {
         if (speedInst > lim) {
           FsmEventData ev{FsmEvent::SpeedJumpDetect, 0};
           fsmDispatch(ev);
+          brakeRelayOff();
           return;
         }
       }
@@ -1103,10 +1283,26 @@ void fsmMotionTick(uint32_t nowMs) {
       fsmDispatch(ev);
     }
   }
+
+  // Реле и контроль эффективности разделены: реле гаснет на speed=0,
+  // проверка «упала ли скорость» идёт каждые 1 с, пока зона/защёлка активны.
+  (void)brakeShouldArm(nowMs);
+  if (BRAKE_EFF_ENABLE && brakeEffPoll(nowMs)) {
+    FsmEventData ev{FsmEvent::BrakeIneffectiveDetect, 0};
+    fsmDispatch(ev);
+    if (g_q == FsmState::Error) {
+      updateBrakeRelay(nowMs);
+      return;
+    }
+  }
+
+  updateBrakeRelay(nowMs);
 }
 
 void fsmBegin() {
   encoderAttach();
+  brakeRelayBegin();
+  dwinBuzzBegin();
   g_q = FsmState::Idle;
   g_tgtGate = TargetGate::Normal;
   invalidateCaches();
@@ -1118,6 +1314,7 @@ void fsmBegin() {
     // First boot / empty flash — keep defaults and seed EEPROM.
     settingsSave(g_plant);
   }
+  g_encInvertFlag = g_plant.encInvert ? 1u : 0u;
   encoderClear();
   forceSpeedZero();
   writeAllDisplayZeros();
@@ -1126,10 +1323,12 @@ void fsmBegin() {
   // Invalidate settings caches so first push always hits the panel.
   g_cacheBrake = 0xFFFFFFFFu;
   g_cacheBrakeOn = g_cacheBrakeOff = 0xFFFF;
+  g_cacheEncInvert = 0xFFFF;
   pushSettings();
   delay(40);
   g_cacheBrake = 0xFFFFFFFFu;
   g_cacheBrakeOn = g_cacheBrakeOff = 0xFFFF;
+  g_cacheEncInvert = 0xFFFF;
   pushSettings();
   dwinSetPage(PAGE_MAIN);
 }

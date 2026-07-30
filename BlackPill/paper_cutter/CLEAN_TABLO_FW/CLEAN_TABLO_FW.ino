@@ -4,12 +4,15 @@
   Autonics E40S6-1000-3-T-24: 1000 P/R на A, колесо Ø 8 см.
   Энкодер: TIM2 encoder mode, A=PA0, B=PA1.
   Ошибки: стр. 11 реверс, 12 нет сигнала, 13 нет ЗАДАНО,
-  14 скачок скорости, 15 обрыв A/B. ИСПРАВИТЬ = VP 6054.
+  14 скачок скорости, 15 обрыв A/B, 16 тормоз не действует.
+  OK = VP 6054.
 */
 
 #include <Arduino.h>
 #include "config.h"
 #include "dwin.h"
+#include "dwin_buzz.h"
+#include "brake_relay.h"
 #include "fsm.h"
 
 void setup() {
@@ -27,6 +30,7 @@ void loop() {
   const uint32_t now = millis();
   fsmPollButtons(now);
   fsmMotionTick(now);
+  dwinBuzzTick(now, brakeRelayIsHigh());
 
   static uint32_t tBlink = 0;
   if (now - tBlink >= fsmLedPeriodMs()) {

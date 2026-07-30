@@ -44,6 +44,8 @@ static constexpr uint32_t ENC_REV_STREAK_GAP_US = 80000;
 static constexpr int PIN_ENC_A = PA0;
 static constexpr int PIN_ENC_B = PA1;
 static constexpr int PIN_LED = PC13;
+// Реле тормоза: бывшие пины энкодера PB0/PB1 свободны. HIGH = катушка/драйвер вкл.
+static constexpr int PIN_RELAY = PB0;
 
 // --- VP ---
 static constexpr uint16_t VP_TARGET = 0x6000;
@@ -79,6 +81,15 @@ static constexpr uint16_t VP_KB_CANCEL = 0x60AD;
 static constexpr uint16_t VP_BRAKE = 0x6090;          // м, U32
 static constexpr uint16_t VP_BRAKE_ON_MS = 0x6094;    // ШИМ «1» мс
 static constexpr uint16_t VP_BRAKE_OFF_MS = 0x6096;   // ШИМ «0» мс
+static constexpr uint16_t VP_ENC_INVERT = 0x6098;     // 0=норма, 1=инверсия A/B
+
+// DWIN system: buzzer duration (unit 8 ms). Example 0x007D ≈ 1 s.
+static constexpr uint16_t VP_DWIN_BUZZ = 0x00A0;
+static constexpr uint16_t BUZZ_ERROR_MS = 200;
+static constexpr uint16_t BUZZ_STOP_BEEP_MS = 120;
+static constexpr uint16_t BUZZ_STOP_GAP_MS = 100;
+static constexpr uint16_t BUZZ_RELAY_BEEP_MS = 220;
+static constexpr uint16_t BUZZ_RELAY_PERIOD_MS = 180;
 
 static constexpr uint16_t PAGE_MAIN = 0;
 static constexpr uint16_t PAGE_KEYPAD = 10;
@@ -87,18 +98,18 @@ static constexpr uint16_t PAGE_ERR_NO_ENC = 12;
 static constexpr uint16_t PAGE_ERR_NO_TARGET = 13;
 static constexpr uint16_t PAGE_ERR_SPEED_JUMP = 14;
 static constexpr uint16_t PAGE_ERR_CHANNEL = 15;
+static constexpr uint16_t PAGE_ERR_BRAKE = 16;  // тормоз не замедляет
 static constexpr uint16_t PAGE_SETTINGS = 17;
 static constexpr uint16_t PAGE_SETTINGS_EDIT = 18;
 // Legacy alias
 static constexpr uint16_t PAGE_ERROR = PAGE_ERR_REVERSE;
 
-// После СТАРТ: нет импульсов TIM дольше N мс → стр. 12 «нет сигнала».
-// Любой импульс/смена CNT сбрасывает таймер — при вращении не сработает.
+// После СТАРТ (Run): нет импульсов ни с A, ни с B дольше N мс → стр. 12.
+// Любой импульс TIM / смена CNT сбрасывает таймер.
 static constexpr bool ENC_NO_SIGNAL_ENABLE = true;
 static constexpr uint32_t ENC_NO_SIGNAL_MS = 4000u;
-// Обрыв A или B (стр. 15): оба канала уже работали, вал крутится (TIM),
-// один молчит ≥ DEAD_MS, второй даёт фронты. Сэмпл — GPIO IDR (AF TIM2).
-static constexpr bool ENC_CH_FAULT_ENABLE = true;
+// Обрыв одного канала A/B (стр. 15) — выкл.; нужна только полная тишина энкодера.
+static constexpr bool ENC_CH_FAULT_ENABLE = false;
 static constexpr uint32_t ENC_CH_DEAD_MS = 2000u;
 static constexpr uint32_t ENC_CH_ARM_MS = 1500u;
 static constexpr uint32_t ENC_CH_MOTION_MS = 300u;
@@ -109,4 +120,12 @@ static constexpr uint32_t SPEED_JUMP_ARM_MS = 2000u;
 static constexpr uint8_t SPEED_JUMP_RATIO = 4;
 static constexpr uint16_t SPEED_JUMP_ABS_CMS = 150;
 static constexpr uint16_t SPEED_JUMP_MIN_EMA_CMS = 50;
+
+// В зоне торможения: раз в PERIOD_MS сравниваем EMA-скорость с прошлой пробой.
+// Не упала (и всё ещё ≥ MIN) → стр. 16.
+static constexpr bool BRAKE_EFF_ENABLE = true;
+static constexpr uint32_t BRAKE_EFF_PERIOD_MS = 5000u;
+static constexpr uint16_t BRAKE_EFF_MIN_CMS = 15;  // ниже = уже почти стоп, OK
+// Нет импульсов столько мс → вал остановлен (отпуск реле).
+static constexpr uint32_t BRAKE_HOLD_IDLE_MS = 400u;
 

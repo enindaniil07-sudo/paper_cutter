@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""CLEAN_TABLO error pages 11..15 — reverse / no signal / no target / speed jump / channel."""
+"""CLEAN_TABLO error pages 11..16 — reverse / no signal / no target / speed jump / channel / brake."""
 from __future__ import annotations
 
 import argparse
@@ -58,6 +58,14 @@ ERRORS: dict[int, tuple[str, tuple[str, ...]]] = {
             "Проверьте A (PA0) и B (PA1).",
         ),
     ),
+    16: (
+        "ТОРМОЗ НЕ ДЕЙСТВУЕТ",
+        (
+            "В зоне торможения скорость",
+            "не снижается по энкодеру.",
+            "Проверьте реле и механизм.",
+        ),
+    ),
 }
 
 
@@ -101,9 +109,9 @@ def render(w: int, h: int, title: str, lines: tuple[str, ...]) -> Image.Image:
         lw = dr.textlength(line, font=f_body) if hasattr(dr, "textlength") else len(line) * 12
         dr.text(((w - lw) / 2, y), line, fill=(220, 200, 200), font=f_body)
         y += 36
-    # No hint line under body — only the ИСПРАВИТЬ button.
+    # No hint line under body — only the OK button.
 
-    btn = draw_soft_btn(280, 72, "ИСПРАВИТЬ", STOP, pressed=False)
+    btn = draw_soft_btn(280, 72, "OK", STOP, pressed=False)
     bx, by = (w - 280) // 2, 380
     if btn.mode == "RGBA":
         im.paste(btn, (bx, by), btn)

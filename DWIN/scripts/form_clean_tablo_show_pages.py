@@ -143,12 +143,12 @@ def patch_arttext_widget(
     struct.pack_into(">H", s, off + 21, 0xFFFF)
 
 
-# Settings use 25.icl / Icon0=50 (34×52 cells) — larger than 28×36, tighter pitch than 56×72.
-# X=720 = right edge of large wells; Y centered in value wells for 52px glyphs.
+# Settings 25.icl / Icon0=50 (34×52). X = правый край колодца (цифры растут влево).
+# Wells: x=460 w=280 → right = 740; Y = верх колодца + 2 (центрирование 52px в 56px).
 SETTINGS_ART = (
-    (0x5190, 0x6090, 5, ART_VAR_LONG32, 720, 105),
-    (0x51A0, 0x6094, 4, ART_VAR_UINT16, 720, 229),
-    (0x51B0, 0x6096, 4, ART_VAR_UINT16, 720, 353),
+    (0x5190, 0x6090, 5, ART_VAR_LONG32, 732, 90),
+    (0x51A0, 0x6094, 4, ART_VAR_UINT16, 732, 188),
+    (0x51B0, 0x6096, 4, ART_VAR_UINT16, 732, 286),
 )
 
 # Main ЗАДАНО / ОСТАЛОСЬ: Y = top of 112px wells (glyphs are 56×112).

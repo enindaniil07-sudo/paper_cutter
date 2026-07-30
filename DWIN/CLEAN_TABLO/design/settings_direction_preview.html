@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=860, initial-scale=1" />
+  <title>CLEAN_TABLO — настройки: инверсия (макет)</title>
+  <style>
+    :root {
+      --bg: #10141c;
+      --row: #1c202a;
+      --well: #000;
+      --amber: #e8a84a;
+      --amber-soft: #ffdcb4;
+      --text: #ffe0b4;
+      --muted: #a0aab9;
+      --back: #5a2a32;
+      --back-line: #e67882;
+      --inv-off: #141820;
+      --inv-off-line: #5a6578;
+      --inv-on: #3d6b4f;
+      --inv-on-line: #7ec99a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: #0a0c10;
+      color: var(--text);
+      font-family: "Segoe UI", system-ui, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 24px 16px 48px;
+      gap: 16px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 600;
+      color: #c8d0dc;
+    }
+    .note {
+      max-width: 800px;
+      font-size: 14px;
+      line-height: 1.45;
+      color: #9aa3b2;
+      margin: 0;
+    }
+    .note strong { color: #dce3ee; }
+    .panel {
+      width: 800px;
+      height: 480px;
+      background: var(--bg);
+      border: 2px solid #2a3140;
+      border-radius: 8px;
+      box-shadow: 0 20px 50px rgba(0,0,0,0.55);
+      position: relative;
+      overflow: hidden;
+      user-select: none;
+    }
+    .title {
+      position: absolute;
+      left: 24px; top: 12px;
+      width: 560px; height: 48px;
+      background: #202430;
+      border: 2px solid var(--amber);
+      border-radius: 14px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 22px; font-weight: 700;
+      color: var(--amber-soft);
+    }
+    .back {
+      position: absolute;
+      left: 600px; top: 12px;
+      width: 176px; height: 48px;
+      background: var(--back);
+      border: 2px solid var(--back-line);
+      border-radius: 14px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; font-weight: 700;
+      color: #ffdce1;
+    }
+    .row {
+      position: absolute;
+      left: 24px;
+      width: 752px;
+      height: 88px;
+      background: var(--row);
+      border: 2px solid var(--amber);
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      gap: 12px;
+    }
+    .row.r1 { top: 72px; }
+    .row.r2 { top: 170px; }
+    .row.r3 { top: 268px; }
+    .row.r4 { top: 366px; }
+    .row.new {
+      box-shadow: 0 0 0 2px rgba(126, 201, 154, 0.35);
+    }
+    .label {
+      flex: 1;
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text);
+      line-height: 1.2;
+    }
+    .well {
+      width: 280px;
+      height: 56px;
+      background: var(--well);
+      border: 2px solid #788ca0;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      padding: 0 14px;
+      font-size: 28px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      color: #f2f5fa;
+    }
+    .unit {
+      width: 36px;
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--muted);
+    }
+    .inv-btn {
+      margin-left: auto;
+      min-width: 220px;
+      height: 56px;
+      border-radius: 12px;
+      border: 2px solid var(--inv-off-line);
+      background: var(--inv-off);
+      color: var(--muted);
+      font-size: 18px;
+      font-weight: 700;
+      cursor: pointer;
+      letter-spacing: 0.04em;
+      transition: 0.15s ease;
+    }
+    .inv-btn.on {
+      background: var(--inv-on);
+      border-color: var(--inv-on-line);
+      color: #e8fff0;
+      box-shadow: 0 0 12px rgba(126, 201, 154, 0.25);
+    }
+    .badge {
+      position: absolute;
+      right: 18px;
+      top: 8px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: #7ec99a;
+      background: rgba(61, 107, 79, 0.35);
+      border: 1px solid #7ec99a;
+      border-radius: 999px;
+      padding: 3px 10px;
+    }
+    .legend {
+      max-width: 800px;
+      width: 100%;
+      background: #151922;
+      border: 1px solid #2a3140;
+      border-radius: 12px;
+      padding: 14px 16px;
+      font-size: 13px;
+      color: #a8b0bd;
+      line-height: 1.45;
+    }
+    .legend strong { color: #e8eef6; }
+    code {
+      font-family: ui-monospace, Consolas, monospace;
+      font-size: 12px;
+      background: #0c0e14;
+      padding: 1px 6px;
+      border-radius: 4px;
+      color: #c9d4e4;
+    }
+  </style>
+</head>
+<body>
+  <h1>CLEAN_TABLO · стр. 17 — макет</h1>
+  <p class="note">
+    Одна кнопка <strong>ИНВЕРСИЯ</strong>: выкл = нормальное направление, вкл (зелёная) = инверсия A/B.
+    Тап переключает. Только HTML-макет.
+  </p>
+
+  <div class="panel">
+    <div class="title">НАСТРОЙКИ</div>
+    <div class="back">НАЗАД</div>
+
+    <div class="row r1">
+      <div class="label">РАССТОЯНИЕ ТОРМОЖЕНИЯ</div>
+      <div class="well">12</div>
+      <div class="unit">м</div>
+    </div>
+
+    <div class="row r2">
+      <div class="label">ВРЕМЯ ТОРМОЗ (1)</div>
+      <div class="well">50</div>
+      <div class="unit">мс</div>
+    </div>
+
+    <div class="row r3">
+      <div class="label">ВРЕМЯ ОТПУСК (0)</div>
+      <div class="well">50</div>
+      <div class="unit">мс</div>
+    </div>
+
+    <div class="row r4 new">
+      <span class="badge">новое</span>
+      <div class="label">НАПРАВЛЕНИЕ<br>ВРАЩЕНИЯ</div>
+      <button type="button" class="inv-btn" id="inv" aria-pressed="false">ИНВЕРСИЯ</button>
+    </div>
+  </div>
+
+  <div class="legend">
+    <strong>После согласия:</strong> BitButton VP <code>6098</code> —
+    <code>0</code> выкл / <code>1</code> вкл; EEPROM; в MCU инвертирует смысл вперёд/назад энкодера.
+  </div>
+
+  <script>
+    const btn = document.getElementById("inv");
+    btn.addEventListener("click", () => {
+      const on = !btn.classList.contains("on");
+      btn.classList.toggle("on", on);
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+  </script>
+</body>
+</html>

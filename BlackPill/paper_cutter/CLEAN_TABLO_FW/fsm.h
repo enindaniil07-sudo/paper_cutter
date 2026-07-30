@@ -12,6 +12,7 @@ enum class FsmError : uint8_t {
   NoTarget,
   SpeedJump,
   ChannelFault,
+  BrakeIneffective,
 };
 
 enum class FsmEvent : uint8_t {
@@ -28,6 +29,7 @@ enum class FsmEvent : uint8_t {
   EncLoss,
   SpeedJumpDetect,
   ChannelFaultDetect,
+  BrakeIneffectiveDetect,
   ErrAck,
   SettingsOpen,
   SettingsBack,
@@ -49,6 +51,7 @@ struct PlantData {
   uint32_t brakeM;         // расстояние торможения, м
   uint16_t brakeOnMs;      // длительность ШИМ «1» (тормоз)
   uint16_t brakeOffMs;     // длительность ШИМ «0» (отпуск)
+  uint8_t encInvert;       // 0=норма, 1=инверсия направления энкодера
 };
 
 void fsmBegin();

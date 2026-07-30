@@ -19,7 +19,9 @@ PAGE_SET = 17
 PAGE_EDIT = 18
 
 
-def pack_bit_button(page: int, c: dict, vp: int, pic_on: int, pic_next: int) -> bytes:
+def pack_bit_button(
+    page: int, c: dict, vp: int, pic_on: int, pic_next: int, *, adj_mode: int = 3
+) -> bytes:
     xs, ys = int(c["x"]), int(c["y"])
     xe, ye = xs + int(c["w"]), ys + int(c["h"])
     pic_on_u = 0xFF00 if pic_on < 0 else pic_on & 0xFFFF
@@ -41,7 +43,7 @@ def pack_bit_button(page: int, c: dict, vp: int, pic_on: int, pic_next: int) -> 
     rec[16] = 0xFE
     struct.pack_into(">H", rec, 17, vp & 0xFFFF)
     rec[19] = 0  # Bit_Pos
-    rec[20] = 3  # Adj_Mode inching
+    rec[20] = adj_mode & 0xFF  # 2=switch/toggle, 3=inching
     return bytes(rec)
 
 
@@ -193,7 +195,7 @@ def main() -> int:
     out += pack_var_input_zado(c["target_touch"], c["kb_display"])
 
     err_btn = {"x": 260, "y": 380, "w": 280, "h": 72}
-    for page in (11, 12, 13, 14, 15):
+    for page in (11, 12, 13, 14, 15, 16):
         out += pack_bit_button(page, err_btn, 0x6054, -1, -1)
 
     for key, code in KB_KEYS:
@@ -239,6 +241,8 @@ def main() -> int:
         kb_page=PAGE_EDIT,
         cursor=kb_cur,
     )
+    # Encoder direction invert — switch BitButton; Pic_On=19 = green ON state.
+    out += pack_bit_button(PAGE_SET, c["btn_enc_invert"], 0x6098, 19, -1, adj_mode=2)
 
     for key, code in SET_EDIT_KEYS:
         out += pack_ascii_key(PAGE_EDIT, c[key], code)

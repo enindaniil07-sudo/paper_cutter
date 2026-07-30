@@ -36,7 +36,7 @@ def _sync(src: Path, dst: Path) -> None:
     os.replace(tmp, dst)
 
 
-def render_settings(w: int, h: int, layout: dict) -> Image.Image:
+def render_settings(w: int, h: int, layout: dict, *, invert_on: bool = False) -> Image.Image:
     c = layout["controls"]
     im = Image.new("RGB", (w, h), (16, 20, 28))
     dr = ImageDraw.Draw(im)
@@ -63,20 +63,34 @@ def render_settings(w: int, h: int, layout: dict) -> Image.Image:
         ("set_row_on", "set_val_on", "ВРЕМЯ ТОРМОЗ (1)", "мс"),
         ("set_row_off", "set_val_off", "ВРЕМЯ ОТПУСК (0)", "мс"),
     ]
-    f_h = font(20, True)
-    f_u = font(16, True)
+    f_h = font(18, True)
+    f_u = font(15, True)
     for row_k, val_k, head, unit in rows:
         row = c[row_k]
         val = c[val_k]
         dr.rounded_rectangle(_box(row), radius=14, fill=(28, 32, 42), outline=AMBER, width=2)
-        dr.text((row["x"] + 16, row["y"] + (row["h"] - 22) / 2), head, fill=(255, 220, 180), font=f_h)
+        dr.text((row["x"] + 16, row["y"] + (row["h"] - 20) / 2), head, fill=(255, 220, 180), font=f_h)
         dr.rounded_rectangle(_box(val), radius=10, fill=(0, 0, 0), outline=(120, 140, 160), width=2)
         dr.text(
-            (val["x"] + val["w"] + 10, val["y"] + (val["h"] - 18) / 2),
+            (val["x"] + val["w"] + 10, val["y"] + (val["h"] - 16) / 2),
             unit,
             fill=(160, 170, 185),
             font=f_u,
         )
+
+    # Direction row + ИНВЕРСИЯ (off / on for Pic_On overlay page 19)
+    row = c["set_row_dir"]
+    inv = c["btn_enc_invert"]
+    dr.rounded_rectangle(_box(row), radius=14, fill=(28, 32, 42), outline=AMBER, width=2)
+    dr.text((row["x"] + 16, row["y"] + 18), "НАПРАВЛЕНИЕ", fill=(255, 220, 180), font=f_h)
+    dr.text((row["x"] + 16, row["y"] + 46), "ВРАЩЕНИЯ", fill=(255, 220, 180), font=f_h)
+    if invert_on:
+        fill, outline, ink = (61, 107, 79), (126, 201, 154), (232, 255, 240)
+    else:
+        fill, outline, ink = (20, 24, 32), (90, 101, 120), (160, 170, 185)
+    dr.rounded_rectangle(_box(inv), radius=12, fill=fill, outline=outline, width=2)
+    f_inv = font(18, True)
+    _center(dr, inv, "ИНВЕРСИЯ", f_inv, ink)
     return im
 
 
@@ -150,20 +164,24 @@ def main() -> int:
     out.mkdir(parents=True, exist_ok=True)
     (root / "source").mkdir(parents=True, exist_ok=True)
 
-    # page16 unused (empty show slot — ArtText on 16 broke layering)
-    blank = Image.new("RGB", (w, h), (16, 20, 28))
-    path16 = out / "16.bmp"
-    blank.save(path16)
-    _sync(path16, root / "DWIN_SET" / "16.bmp")
-    _sync(path16, root / "16.bmp")
+    # page16 = error «тормоз не действует» (render_clean_tablo_error.py).
+    # Do not overwrite with a blank — that clobbers the error BMP.
 
     # page17 = settings list (ArtText digits live here)
-    p17 = render_settings(w, h, layout)
+    p17 = render_settings(w, h, layout, invert_on=False)
     path17 = out / "17.bmp"
     p17.save(path17)
     _sync(path17, root / "DWIN_SET" / "17.bmp")
     _sync(path17, root / "17.bmp")
     p17.save(root / "source" / "page17_settings.png")
+
+    # page19 = Pic_On for ИНВЕРСИЯ (BitButton switch ON) — same layout, green button
+    p19 = render_settings(w, h, layout, invert_on=True)
+    path19 = out / "19.bmp"
+    p19.save(path19)
+    _sync(path19, root / "DWIN_SET" / "19.bmp")
+    _sync(path19, root / "19.bmp")
+    p19.save(root / "source" / "page19_invert_on.png")
 
     # page18 = settings edit keypad
     p18 = render_edit(w, h, layout)
@@ -173,7 +191,7 @@ def main() -> int:
     _sync(path18, root / "18.bmp")
     p18.save(root / "source" / "page18_settings_edit.png")
 
-    print("Wrote", path16, "(blank),", path17, "(settings),", path18, "(edit)")
+    print("Wrote", path17, "(settings),", path19, "(invert ON),", path18, "(edit)")
     return 0
 
 
