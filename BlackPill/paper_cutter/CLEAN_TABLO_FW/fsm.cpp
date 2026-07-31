@@ -194,26 +194,30 @@ static void fsmDispatch(const FsmEventData& ev) {
     dwinBuzzStopTriple();
   }
 
-  if (g_q == FsmState::Run || g_q == FsmState::Stopped) {
-    if (ev.type == FsmEvent::BrakeIneffectiveDetect) {
+  // Sensor / brake faults before UI transitions.
+  if (ev.type == FsmEvent::BrakeIneffectiveDetect) {
+    if (g_q == FsmState::Run || g_q == FsmState::Stopped) {
       actShowError(FsmError::BrakeIneffective);
       g_q = FsmState::Error;
-      return;
     }
+    return;
   }
-  if (g_q == FsmState::Run) {
-    if (ev.type == FsmEvent::ReverseDetect) {
+  if (ev.type == FsmEvent::ReverseDetect) {
+    if (g_q == FsmState::Run) {
       actShowError(FsmError::Reverse);
       g_q = FsmState::Error;
-      return;
     }
-    if (ev.type == FsmEvent::EncLoss) {
+    return;
+  }
+  if (ev.type == FsmEvent::EncLoss) {
+    if (g_q == FsmState::Run) {
       actShowError(FsmError::NoEncoder);
       g_q = FsmState::Error;
-      return;
     }
+    return;
   }
 
+  // Digit/Del/Ok/Cancel from main → open keypad first.
   const bool isKb = ev.type == FsmEvent::KbDigit || ev.type == FsmEvent::KbDel ||
                     ev.type == FsmEvent::KbOk || ev.type == FsmEvent::KbCancel;
   if (isKb && g_q != FsmState::Keypad && g_q != FsmState::Error &&
@@ -222,167 +226,103 @@ static void fsmDispatch(const FsmEventData& ev) {
     g_q = FsmState::Keypad;
   }
 
-  FsmState q = g_q;
-  FsmState qn = q;
+  FsmState qn = g_q;
 
-  switch (q) {
-    case FsmState::Idle:
-      switch (ev.type) {
-        case FsmEvent::Stop:
-          plantUiForceSpeedZero();
-          qn = FsmState::Stopped;
-          break;
-        case FsmEvent::Reset:
-          actClearPlant();
-          qn = FsmState::Idle;
-          break;
-        case FsmEvent::KbOpen:
-          actKbOpen();
-          qn = FsmState::Keypad;
-          break;
-        case FsmEvent::SettingsOpen:
-          actSettingsOpen();
-          qn = FsmState::Settings;
-          break;
-        default:
-          break;
+  switch (ev.type) {
+    case FsmEvent::Stop:
+      if (g_q == FsmState::Settings) {
+        plantUiPullSettings(200, fsmOnDwinVp);
+        dwinSetPage(PAGE_MAIN);
+        plantUiForceSpeedZero();
+        qn = FsmState::Idle;
+      } else if (g_q == FsmState::Error) {
+        plantUiForceSpeedZero();
+        qn = FsmState::Error;
+      } else if (g_q == FsmState::Run || g_q == FsmState::Stopped) {
+        if (!brakeLogicIsLatched()) plantUiForceSpeedZero();
+        qn = FsmState::Stopped;
+      } else if (g_q == FsmState::Idle || g_q == FsmState::Keypad) {
+        plantUiForceSpeedZero();
+        qn = FsmState::Stopped;
       }
       break;
 
-    case FsmState::Keypad:
-      switch (ev.type) {
-        case FsmEvent::KbDigit:
-          actKbDigit(ev.digit);
-          qn = FsmState::Keypad;
-          break;
-        case FsmEvent::KbDel:
-          actKbDel();
-          qn = FsmState::Keypad;
-          break;
-        case FsmEvent::KbOk:
-          actKbCommit();
-          qn = FsmState::Idle;
-          break;
-        case FsmEvent::KbCancel:
-          actKbCancel();
-          qn = FsmState::Idle;
-          break;
-        case FsmEvent::KbOpen:
-          actKbOpen();
-          qn = FsmState::Keypad;
-          break;
-        case FsmEvent::SettingsOpen:
-          actSettingsOpen();
-          qn = FsmState::Settings;
-          break;
-        case FsmEvent::Stop:
-          plantUiForceSpeedZero();
-          qn = FsmState::Stopped;
-          break;
-        case FsmEvent::Reset:
-          actClearPlant();
-          qn = FsmState::Idle;
-          break;
-        default:
-          break;
+    case FsmEvent::Reset:
+      if (g_q == FsmState::Settings) {
+        plantUiPullSettings(100, fsmOnDwinVp);
+        actClearPlant();
+        dwinSetPage(PAGE_MAIN);
+      } else if (g_q == FsmState::Error) {
+        actClearPlant();
+        actDismissError();
+      } else {
+        actClearPlant();
       }
+      qn = FsmState::Idle;
       break;
 
-    case FsmState::Run:
-      switch (ev.type) {
-        case FsmEvent::TargetDone:
-          actTargetClamp();
-          qn = FsmState::Stopped;
-          break;
-        case FsmEvent::Stop:
-          if (!brakeLogicIsLatched()) plantUiForceSpeedZero();
-          qn = FsmState::Stopped;
-          break;
-        case FsmEvent::Reset:
-          actClearPlant();
-          qn = FsmState::Idle;
-          break;
-        case FsmEvent::KbOpen:
-          actKbOpen();
-          qn = FsmState::Keypad;
-          break;
-        case FsmEvent::SettingsOpen:
-          if (!brakeLogicIsLatched()) plantUiForceSpeedZero();
-          actSettingsOpen();
-          qn = FsmState::Settings;
-          break;
-        default:
-          break;
-      }
+    case FsmEvent::KbOpen:
+      if (g_q == FsmState::Error || g_q == FsmState::Settings) break;
+      actKbOpen();
+      qn = FsmState::Keypad;
       break;
 
-    case FsmState::Stopped:
-      switch (ev.type) {
-        case FsmEvent::Stop:
-          if (!brakeLogicIsLatched()) plantUiForceSpeedZero();
-          qn = FsmState::Stopped;
-          break;
-        case FsmEvent::Reset:
-          actClearPlant();
-          qn = FsmState::Idle;
-          break;
-        case FsmEvent::KbOpen:
-          actKbOpen();
-          qn = FsmState::Keypad;
-          break;
-        case FsmEvent::SettingsOpen:
-          actSettingsOpen();
-          qn = FsmState::Settings;
-          break;
-        default:
-          break;
+    case FsmEvent::SettingsOpen:
+      if (g_q == FsmState::Error) break;
+      if (g_q == FsmState::Settings) {
+        qn = FsmState::Settings;
+        break;
       }
+      if (g_q == FsmState::Run && !brakeLogicIsLatched()) {
+        plantUiForceSpeedZero();
+      }
+      actSettingsOpen();
+      qn = FsmState::Settings;
       break;
 
-    case FsmState::Error:
-      switch (ev.type) {
-        case FsmEvent::ErrAck:
-          actDismissError();
-          qn = FsmState::Idle;
-          break;
-        case FsmEvent::Reset:
-          actClearPlant();
-          actDismissError();
-          qn = FsmState::Idle;
-          break;
-        case FsmEvent::Stop:
-          plantUiForceSpeedZero();
-          qn = FsmState::Error;
-          break;
-        default:
-          break;
-      }
+    case FsmEvent::SettingsBack:
+      if (g_q != FsmState::Settings) break;  // ignore stale VP in Idle
+      actSettingsBack();
+      qn = FsmState::Idle;
       break;
 
-    case FsmState::Settings:
-      switch (ev.type) {
-        case FsmEvent::SettingsBack:
-          actSettingsBack();
-          qn = FsmState::Idle;
-          break;
-        case FsmEvent::Stop:
-          plantUiPullSettings(200, fsmOnDwinVp);
-          dwinSetPage(PAGE_MAIN);
-          plantUiForceSpeedZero();
-          qn = FsmState::Idle;
-          break;
-        case FsmEvent::Reset:
-          plantUiPullSettings(100, fsmOnDwinVp);
-          actClearPlant();
-          dwinSetPage(PAGE_MAIN);
-          qn = FsmState::Idle;
-          break;
-        case FsmEvent::SettingsOpen:
-          qn = FsmState::Settings;
-          break;
-        default:
-          break;
-      }
+    case FsmEvent::KbDigit:
+      if (g_q != FsmState::Keypad) break;
+      actKbDigit(ev.digit);
+      qn = FsmState::Keypad;
+      break;
+
+    case FsmEvent::KbDel:
+      if (g_q != FsmState::Keypad) break;
+      actKbDel();
+      qn = FsmState::Keypad;
+      break;
+
+    case FsmEvent::KbOk:
+      if (g_q != FsmState::Keypad) break;
+      actKbCommit();
+      qn = FsmState::Idle;
+      break;
+
+    case FsmEvent::KbCancel:
+      if (g_q != FsmState::Keypad) break;
+      actKbCancel();
+      qn = FsmState::Idle;
+      break;
+
+    case FsmEvent::TargetDone:
+      if (g_q != FsmState::Run) break;
+      actTargetClamp();
+      qn = FsmState::Stopped;
+      break;
+
+    case FsmEvent::ErrAck:
+      if (g_q != FsmState::Error) break;
+      actDismissError();
+      qn = FsmState::Idle;
+      break;
+
+    default:
       break;
   }
 
@@ -391,6 +331,16 @@ static void fsmDispatch(const FsmEventData& ev) {
 
 static bool mapVpToEvent(uint16_t vp, FsmEventData& ev) {
   ev.digit = 0;
+  if (vp >= VP_KB_1 && vp <= VP_KB_9) {
+    ev.type = FsmEvent::KbDigit;
+    ev.digit = (uint8_t)(vp - VP_KB_1 + 1u);
+    return true;
+  }
+  if (vp == VP_KB_0) {
+    ev.type = FsmEvent::KbDigit;
+    ev.digit = 0;
+    return true;
+  }
   switch (vp) {
     case VP_STOP: ev.type = FsmEvent::Stop; return true;
     case VP_RESET: ev.type = FsmEvent::Reset; return true;
@@ -401,16 +351,6 @@ static bool mapVpToEvent(uint16_t vp, FsmEventData& ev) {
     case VP_KB_OK: ev.type = FsmEvent::KbOk; return true;
     case VP_KB_CANCEL: ev.type = FsmEvent::KbCancel; return true;
     case VP_KB_DEL: ev.type = FsmEvent::KbDel; return true;
-    case VP_KB_0: ev.type = FsmEvent::KbDigit; ev.digit = 0; return true;
-    case VP_KB_1: ev.type = FsmEvent::KbDigit; ev.digit = 1; return true;
-    case VP_KB_2: ev.type = FsmEvent::KbDigit; ev.digit = 2; return true;
-    case VP_KB_3: ev.type = FsmEvent::KbDigit; ev.digit = 3; return true;
-    case VP_KB_4: ev.type = FsmEvent::KbDigit; ev.digit = 4; return true;
-    case VP_KB_5: ev.type = FsmEvent::KbDigit; ev.digit = 5; return true;
-    case VP_KB_6: ev.type = FsmEvent::KbDigit; ev.digit = 6; return true;
-    case VP_KB_7: ev.type = FsmEvent::KbDigit; ev.digit = 7; return true;
-    case VP_KB_8: ev.type = FsmEvent::KbDigit; ev.digit = 8; return true;
-    case VP_KB_9: ev.type = FsmEvent::KbDigit; ev.digit = 9; return true;
     default: return false;
   }
 }
