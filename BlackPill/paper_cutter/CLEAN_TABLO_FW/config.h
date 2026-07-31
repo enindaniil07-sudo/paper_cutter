@@ -13,18 +13,11 @@
 // --- Mechanics ---
 // Datasheet: 1000 P/R on channel A.
 // TIM2 Encoder mode 2 counts both edges of A → 2000 TIM counts / revolution.
-static constexpr uint16_t ENC_PPR = 1000;
-static constexpr uint32_t ENC_COUNTS_PER_REV = 2000u;
-static constexpr float WHEEL_D_M = 0.08f;
-static constexpr float CIRC_M = 3.14159265f * WHEEL_D_M;
 // nm per TIM count: π × 0.08 × 1e9 / 2000
 static constexpr uint32_t NM_PER_COUNT = 125664UL;
-// Legacy alias (1 A-rising ≈ 2 TIM counts)
-static constexpr uint32_t NM_PER_PULSE = 251327UL;
 
 static constexpr uint32_t MAX_METERS = 99999u;
 static constexpr uint16_t MAX_SPEED_CMS = 9999;
-static constexpr uint16_t MAX_RPM = 9999;
 
 static constexpr uint16_t SPEED_PERIOD_MS = 40;
 static constexpr uint16_t TRAVEL_PERIOD_MS = 50;
@@ -39,10 +32,7 @@ static constexpr uint8_t SPEED_EMA_N = 4;
 static constexpr uint8_t ENC_REV_CONFIRM = 80;
 static constexpr uint32_t ENC_REV_STREAK_GAP_US = 80000;
 
-// TIM2_CH1 / TIM2_CH2 — MUST rewire encoder from PB0/PB1 → PA0/PA1.
-// PA2/PA3 busy (USART2 ↔ DWIN).
-static constexpr int PIN_ENC_A = PA0;
-static constexpr int PIN_ENC_B = PA1;
+// TIM2_CH1 / TIM2_CH2 — PA0/PA1 (PA2/PA3 busy: USART2 ↔ DWIN).
 static constexpr int PIN_LED = PC13;
 // Реле тормоза: бывшие пины энкодера PB0/PB1 свободны. HIGH = катушка/драйвер вкл.
 static constexpr int PIN_RELAY = PB0;
@@ -51,10 +41,8 @@ static constexpr int PIN_RELAY = PB0;
 static constexpr uint16_t VP_TARGET = 0x6000;
 static constexpr uint16_t VP_TRAVEL = 0x6010;
 static constexpr uint16_t VP_SPEED = 0x6020;
-static constexpr uint16_t VP_RPM = 0x6024;
 static constexpr uint16_t VP_PROGRESS = 0x6030;
 
-static constexpr uint16_t VP_START = 0x6050;
 static constexpr uint16_t VP_STOP = 0x6051;
 static constexpr uint16_t VP_RESET = 0x6052;
 static constexpr uint16_t VP_KB_OPEN = 0x6053;
@@ -95,31 +83,13 @@ static constexpr uint16_t PAGE_MAIN = 0;
 static constexpr uint16_t PAGE_KEYPAD = 10;
 static constexpr uint16_t PAGE_ERR_REVERSE = 11;
 static constexpr uint16_t PAGE_ERR_NO_ENC = 12;
-static constexpr uint16_t PAGE_ERR_NO_TARGET = 13;
-static constexpr uint16_t PAGE_ERR_SPEED_JUMP = 14;
-static constexpr uint16_t PAGE_ERR_CHANNEL = 15;
+// Pages 13–15 reserved on panel (unused by FW).
 static constexpr uint16_t PAGE_ERR_BRAKE = 16;  // тормоз не замедляет
-static constexpr uint16_t PAGE_SETTINGS = 17;
-static constexpr uint16_t PAGE_SETTINGS_EDIT = 18;
-// Legacy alias
-static constexpr uint16_t PAGE_ERROR = PAGE_ERR_REVERSE;
 
 // После СТАРТ (Run): нет импульсов ни с A, ни с B дольше N мс → стр. 12.
 // Любой импульс TIM / смена CNT сбрасывает таймер.
 static constexpr bool ENC_NO_SIGNAL_ENABLE = true;
 static constexpr uint32_t ENC_NO_SIGNAL_MS = 4000u;
-// Обрыв одного канала A/B (стр. 15) — выкл.; нужна только полная тишина энкодера.
-static constexpr bool ENC_CH_FAULT_ENABLE = false;
-static constexpr uint32_t ENC_CH_DEAD_MS = 2000u;
-static constexpr uint32_t ENC_CH_ARM_MS = 1500u;
-static constexpr uint32_t ENC_CH_MOTION_MS = 300u;
-static constexpr uint8_t ENC_CH_MIN_EDGES = 16;
-static constexpr uint8_t ENC_CH_LIVE_MIN = 8;
-static constexpr bool SPEED_JUMP_ENABLE = false;
-static constexpr uint32_t SPEED_JUMP_ARM_MS = 2000u;
-static constexpr uint8_t SPEED_JUMP_RATIO = 4;
-static constexpr uint16_t SPEED_JUMP_ABS_CMS = 150;
-static constexpr uint16_t SPEED_JUMP_MIN_EMA_CMS = 50;
 
 // В зоне торможения: раз в PERIOD_MS сравниваем EMA-скорость с прошлой пробой.
 // Не упала (и всё ещё ≥ MIN) → стр. 16.
@@ -128,4 +98,3 @@ static constexpr uint32_t BRAKE_EFF_PERIOD_MS = 5000u;
 static constexpr uint16_t BRAKE_EFF_MIN_CMS = 15;  // ниже = уже почти стоп, OK
 // Нет импульсов столько мс → вал остановлен (отпуск реле).
 static constexpr uint32_t BRAKE_HOLD_IDLE_MS = 400u;
-

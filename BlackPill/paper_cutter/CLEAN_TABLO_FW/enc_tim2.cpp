@@ -1,5 +1,4 @@
 #include "enc_tim2.h"
-#include "config.h"
 
 #if defined(STM32F4xx)
 #include "stm32f4xx.h"
@@ -31,7 +30,7 @@ void encTim2Begin() {
   // IC1=TI1, IC2=TI2 + digital filter (less noise → fewer false reverses)
   TIM2->CCMR1 = TIM_CCMR1_CC1S_0 | TIM_CCMR1_CC2S_0 |
                 (0x6u << TIM_CCMR1_IC1F_Pos) | (0x6u << TIM_CCMR1_IC2F_Pos);
-  // Rising-active + enable captures so CC1IF/CC2IF mark A/B edges in encoder mode
+  // Rising-active + enable captures (required for encoder SMS)
   TIM2->CCER = TIM_CCER_CC1E | TIM_CCER_CC2E;
 
   // Encoder mode 2: count on TI1 (A) edges, direction from TI2 (B)
@@ -41,7 +40,7 @@ void encTim2Begin() {
   TIM2->CNT = 0;
   TIM2->EGR = TIM_EGR_UG;
   TIM2->SR = 0;
-  TIM2->DIER = 0;  // no IRQ — poll UIF / CCxIF in encTim2Poll()
+  TIM2->DIER = 0;  // no IRQ — poll UIF in encTim2Poll()
   TIM2->CR1 = TIM_CR1_CEN;
 
   s_lastCnt = 0;
@@ -61,21 +60,6 @@ void encTim2SyncBaseline() {
 }
 
 uint32_t encTim2Cnt() { return TIM2->CNT; }
-
-void encTim2ReadAb(uint8_t& a, uint8_t& b) {
-  // IDR reflects pin voltage even in AF mode (TIM does not steal the pad read).
-  const uint32_t idr = GPIOA->IDR;
-  a = (uint8_t)(idr & 1u);
-  b = (uint8_t)((idr >> 1) & 1u);
-}
-
-void encTim2TakeCaptureEdges(bool& edgeA, bool& edgeB) {
-  const uint32_t sr = TIM2->SR;
-  edgeA = (sr & TIM_SR_CC1IF) != 0;
-  edgeB = (sr & TIM_SR_CC2IF) != 0;
-  if (edgeA) TIM2->SR = (uint32_t)~TIM_SR_CC1IF;
-  if (edgeB) TIM2->SR = (uint32_t)~TIM_SR_CC2IF;
-}
 
 EncTim2Delta encTim2Poll() {
   EncTim2Delta d = {};
