@@ -33,6 +33,8 @@ void plantUiWriteAllZeros() {
   plantUiDwinWriteU32x2(VP_TRAVEL, 0);
   dwinWriteU16x2(VP_PROGRESS, 0);
   dwinWriteU16(VP_SPEED, 0);
+  g_cacheSpeed = 0;
+  g_speedShown = false;
 }
 
 void plantUiPushKb() {
@@ -167,8 +169,4 @@ void plantUiForceSpeedZero() {
     g_cacheSpeed = 0;
     g_speedShown = false;
   }
-}
-
-bool plantUiSpeedLive() {
-  return g_q == FsmState::Idle || g_q == FsmState::Run || g_brakeLatched;
 }

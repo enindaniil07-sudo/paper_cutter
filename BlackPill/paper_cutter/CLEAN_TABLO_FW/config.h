@@ -17,7 +17,7 @@
 static constexpr uint32_t NM_PER_COUNT = 125664UL;
 
 static constexpr uint32_t MAX_METERS = 99999u;
-static constexpr uint16_t MAX_SPEED_CMS = 9999;
+static constexpr uint16_t MAX_SPEED_CMS = 65535;  // U16 max ≈ 655.35 м/с (панель XXX.XX)
 
 static constexpr uint16_t SPEED_PERIOD_MS = 40;
 static constexpr uint16_t TRAVEL_PERIOD_MS = 50;

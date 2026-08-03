@@ -7,6 +7,7 @@ FsmError g_err = FsmError::None;
 uint32_t g_speedEma = 0;
 bool g_speedShown = false;
 bool g_brakeLatched = false;
+bool g_jobComplete = false;
 
 TargetGate g_tgtGate = TargetGate::Normal;
 uint32_t g_tgtResetStartMs = 0;

@@ -20,5 +20,4 @@ void plantUiRequestSettingsReads();
 void plantUiPullSettings(uint32_t waitMs, DwinVpHandler onVp);
 void plantUiOnSettingsVp(uint16_t vp, uint32_t value);
 
-bool plantUiSpeedLive();
 uint16_t plantUiProgressPct();

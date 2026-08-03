@@ -62,6 +62,8 @@ static void actClearPlant() {
   plantUiForceSpeedZero();
   brakeLogicClearLatch();
   brakeEffReset();
+  brakeLogicClearFaultMute();
+  g_jobComplete = false;
   plantInvalidateCaches();
 
   g_tgtGate = TargetGate::Resetting;
@@ -83,14 +85,11 @@ static void actClearPlant() {
 }
 
 static void actPrepareRun() {
-  if (g_plant.targetM > 0 && g_plant.travelM >= plantTargetCm()) {
-    g_plant.travelM = 0;
-    encPathClear();
-    plantUiForceRemainProgress();
-  }
   encPathClearWindow();
   plantUiForceSpeedZero();
   brakeEffReset();
+  // Mute clears only after real pulses (see fsmMotionTick) — иначе ложный
+  // вход в Run после стопа сразу снимает mute и через 4 с всплывает «нет энкодера».
   const uint32_t t = millis();
   encPathSetLastPulseMs(t);
   encPathSyncCntWatch();
@@ -179,9 +178,28 @@ static void actTargetClamp() {
   plantUiForceRemainProgress();
 }
 
+/** Конец задачи: выход из Run, счёт заморожен до СБРОС + новый ввод. */
+static void actFinishJob() {
+  g_jobComplete = true;
+  brakeLogicMuteFaults();
+  g_speedEma = 0;
+  plantUiForceSpeedZero();
+  if (g_plant.targetM > 0 && g_plant.travelM > plantTargetCm()) {
+    actTargetClamp();
+  } else {
+    plantUiForceRemainProgress();
+  }
+  // Путь обнуляем — travel уже в g_plant; дальше encPath не подмешиваем.
+  encPathClear();
+  encPathClearReverse();
+  g_q = FsmState::Stopped;
+}
+
 static bool tryArmRunFromMotion() {
+  if (g_jobComplete) return false;
   if (g_plant.targetM == 0) return false;
   if (g_plant.travelM >= plantTargetCm()) return false;
+  if (g_tgtGate != TargetGate::Normal) return false;
   const uint8_t pendingRev = encPathTakeReverseHit();
   actPrepareRun();
   if (pendingRev) encPathSetReverseHit();
@@ -190,11 +208,13 @@ static bool tryArmRunFromMotion() {
 }
 
 static void fsmDispatch(const FsmEventData& ev) {
-  if (ev.type == FsmEvent::Stop || ev.type == FsmEvent::TargetDone) {
-    dwinBuzzStopTriple();
+  // Sensor / brake faults before UI transitions.
+  if (ev.type == FsmEvent::BrakeIneffectiveDetect ||
+      ev.type == FsmEvent::ReverseDetect ||
+      ev.type == FsmEvent::EncLoss) {
+    if (brakeLogicFaultsMuted()) return;
   }
 
-  // Sensor / brake faults before UI transitions.
   if (ev.type == FsmEvent::BrakeIneffectiveDetect) {
     if (g_q == FsmState::Run || g_q == FsmState::Stopped) {
       actShowError(FsmError::BrakeIneffective);
@@ -239,7 +259,8 @@ static void fsmDispatch(const FsmEventData& ev) {
         plantUiForceSpeedZero();
         qn = FsmState::Error;
       } else if (g_q == FsmState::Run || g_q == FsmState::Stopped) {
-        if (!brakeLogicIsLatched()) plantUiForceSpeedZero();
+        // СТОП → ШИМ тормоза (настройки on/off мс) до полной остановки вала.
+        brakeLogicArmLatch();
         qn = FsmState::Stopped;
       } else if (g_q == FsmState::Idle || g_q == FsmState::Keypad) {
         plantUiForceSpeedZero();
@@ -314,6 +335,14 @@ static void fsmDispatch(const FsmEventData& ev) {
       if (g_q != FsmState::Run) break;
       actTargetClamp();
       qn = FsmState::Stopped;
+      g_jobComplete = true;  // счёт закрыт; дотормаживание путь не двигает
+      brakeLogicMuteFaults();
+      // Нет зоны торможения → сразу тройной пик; иначе — когда вал встанет.
+      if (!brakeLogicIsLatched()) {
+        dwinBuzzStopTriple();
+        encPathClear();
+        encPathClearReverse();
+      }
       break;
 
     case FsmEvent::ErrAck:
@@ -526,43 +555,7 @@ void fsmMotionTick(uint32_t nowMs) {
     return;
   }
 
-  if (g_q == FsmState::Error) {
-    plantUiForceSpeedZero();
-    if (g_err == FsmError::Reverse || g_err == FsmError::BrakeIneffective) {
-      brakeLogicUpdateRelay(nowMs);
-    } else {
-      brakeRelayOff();
-    }
-    return;
-  }
-
-  if ((g_q == FsmState::Idle || g_q == FsmState::Stopped) && encPathActivity()) {
-    tryArmRunFromMotion();
-  }
-
-  if (encPathTakeReverseHit() && g_q == FsmState::Run) {
-    FsmEventData ev{FsmEvent::ReverseDetect, 0};
-    fsmDispatch(ev);
-    if (g_q == FsmState::Error) {
-      brakeLogicUpdateRelay(nowMs);
-      return;
-    }
-  }
-
-  if (g_q == FsmState::Run || brakeLogicIsLatched()) {
-    encPathNoteCntPulse(nowMs);
-  }
-
-  if (ENC_NO_SIGNAL_ENABLE && g_q == FsmState::Run) {
-    const int32_t quietMs = (int32_t)(nowMs - encPathLastPulseMs());
-    if (quietMs >= (int32_t)ENC_NO_SIGNAL_MS) {
-      FsmEventData ev{FsmEvent::EncLoss, 0};
-      fsmDispatch(ev);
-      brakeRelayOff();
-      return;
-    }
-  }
-
+  // Скорость — всегда, даже в Error / после конца задачи.
   if (nowMs - lastSpeedMs >= SPEED_PERIOD_MS) {
     const uint32_t nowUs = micros();
     uint32_t dtUs = nowUs - lastSpeedUs;
@@ -571,14 +564,18 @@ void fsmMotionTick(uint32_t nowMs) {
     if (dtUs == 0) dtUs = (uint32_t)SPEED_PERIOD_MS * 1000u;
 
     const uint32_t win = encPathTakePulseWin();
-    if (win > 0) encPathSetLastPulseMs(nowMs);
+    if (win > 0) {
+      encPathSetLastPulseMs(nowMs);
+      // Реальное движение после стопа — снова разрешаем fault-страницы.
+      if (!g_jobComplete && brakeLogicFaultsMuted()) {
+        brakeLogicClearFaultMute();
+      }
+    }
 
-    const bool onKeypad = (g_q == FsmState::Keypad || g_q == FsmState::Settings);
-    const bool live = plantUiSpeedLive();
     const int32_t sincePulse = (int32_t)(nowMs - encPathLastPulseMs());
     const bool idleStop = (sincePulse >= (int32_t)SPEED_IDLE_ZERO_MS);
 
-    if (!live || onKeypad || idleStop) {
+    if (idleStop) {
       plantUiForceSpeedZero();
     } else if (win > 0) {
       const uint32_t speedInst =
@@ -593,16 +590,60 @@ void fsmMotionTick(uint32_t nowMs) {
     }
   }
 
+  if (g_q == FsmState::Error) {
+    if (g_err == FsmError::Reverse || g_err == FsmError::BrakeIneffective) {
+      brakeLogicUpdateRelay(nowMs);
+    } else {
+      brakeRelayOff();
+    }
+    return;
+  }
+
+  if (!g_jobComplete && (g_q == FsmState::Idle || g_q == FsmState::Stopped) &&
+      encPathActivity() && !brakeLogicIsLatched()) {
+    tryArmRunFromMotion();
+  }
+
+  if (encPathTakeReverseHit() && g_q == FsmState::Run) {
+    FsmEventData ev{FsmEvent::ReverseDetect, 0};
+    fsmDispatch(ev);
+    if (g_q == FsmState::Error) {
+      brakeLogicUpdateRelay(nowMs);
+      return;
+    }
+  }
+
+  // Импульсы для EncLoss / idle-zero — постоянно.
+  encPathNoteCntPulse(nowMs);
+
+  // Во время торможения тишина энкодера ожидаема — не считать потерей сигнала.
+  if (ENC_NO_SIGNAL_ENABLE && g_q == FsmState::Run && !brakeLogicIsLatched() &&
+      !brakeLogicFaultsMuted()) {
+    const int32_t quietMs = (int32_t)(nowMs - encPathLastPulseMs());
+    if (quietMs >= (int32_t)ENC_NO_SIGNAL_MS) {
+      FsmEventData ev{FsmEvent::EncLoss, 0};
+      fsmDispatch(ev);
+      brakeRelayOff();
+      return;
+    }
+  }
+
   if (nowMs - lastTravelMs >= TRAVEL_PERIOD_MS) {
     lastTravelMs = nowMs;
 
-    g_plant.travelM = encPathTravelCm();
-    if (g_q != FsmState::Keypad && g_q != FsmState::Settings) plantUiPushTravel();
+    // Считаем только в работе / пока дотормаживаем; после конца задачи — заморозка.
+    if (!g_jobComplete &&
+        (g_q == FsmState::Run || brakeLogicIsLatched())) {
+      g_plant.travelM = encPathTravelCm();
+      if (g_q != FsmState::Keypad && g_q != FsmState::Settings) {
+        plantUiPushTravel();
+      }
 
-    if (g_q == FsmState::Run && g_plant.targetM > 0 &&
-        g_plant.travelM >= plantTargetCm()) {
-      FsmEventData ev{FsmEvent::TargetDone, 0};
-      fsmDispatch(ev);
+      if (g_q == FsmState::Run && g_plant.targetM > 0 &&
+          g_plant.travelM >= plantTargetCm()) {
+        FsmEventData ev{FsmEvent::TargetDone, 0};
+        fsmDispatch(ev);
+      }
     }
   }
 
@@ -617,6 +658,12 @@ void fsmMotionTick(uint32_t nowMs) {
   }
 
   brakeLogicUpdateRelay(nowMs);
+
+  // Реле тормоза отработало до 0 → задача выполнена, выход из режима работы.
+  if (brakeLogicTakeStopComplete()) {
+    dwinBuzzStopTriple();
+    actFinishJob();
+  }
 }
 
 void fsmBegin() {

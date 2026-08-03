@@ -112,7 +112,7 @@ def pack_main(layout: dict) -> bytes:
     specs = (
         ("target_display", 0x6000, 30, 24, 5, 0, ICON_H_LARGE, ART_VAR_LONG32),
         ("travel_display", 0x6010, 30, 24, 5, 0, ICON_H_LARGE, ART_VAR_LONG32),
-        ("speed_ms_display", 0x6020, 50, 25, 2, 2, ICON_H_SMALL, ART_VAR_UINT16),
+        ("speed_ms_display", 0x6020, 50, 25, 3, 2, ICON_H_SMALL, ART_VAR_UINT16),
         ("speed_rpm_display", 0x6024, 50, 25, 4, 0, ICON_H_SMALL, ART_VAR_UINT16),
     )
     out = bytearray()

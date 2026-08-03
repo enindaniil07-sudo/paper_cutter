@@ -49,6 +49,7 @@ void encPathPoll(uint32_t nowMs) {
   }
 
   if (d.reverse > 0) {
+    g_pulseWin += d.reverse;  // скорость — по |Δ|, путь только вперёд
     const uint32_t nowUs = micros();
     if (g_revStreak > 0 && (nowUs - g_lastRevUs) > ENC_REV_STREAK_GAP_US) {
       g_revStreak = 0;
