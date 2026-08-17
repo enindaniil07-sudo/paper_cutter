@@ -51,9 +51,9 @@ def main() -> int:
 
     specs: list[tuple[str, Path, list[int], int]] = []
     if args.which in ("large", "all"):
-        specs.append(("large", root / "image" / "digits_large", list(range(30, 41)), 24))
+        specs.append(("large", root / "image" / "digits_large", list(range(30, 42)), 24))
     if args.which in ("small", "all"):
-        specs.append(("small", root / "image" / "digits_small", list(range(50, 61)), 25))
+        specs.append(("small", root / "image" / "digits_small", list(range(50, 62)), 25))
     if args.which in ("progress", "all"):
         n_prog = 101  # icons 70..170 = 0..100 %
         specs.append(("progress", root / "image" / "progress", list(range(70, 70 + n_prog)), 26))

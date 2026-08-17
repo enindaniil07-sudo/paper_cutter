@@ -31,14 +31,28 @@ def _font(px: int):
     return ImageFont.load_default()
 
 
-def _glyph(ch: str, tw: int, th: int, font_px: int, color: tuple[int, int, int]) -> Image.Image:
+def _glyph(
+    ch: str,
+    tw: int,
+    th: int,
+    font_px: int,
+    color: tuple[int, int, int],
+    *,
+    y_bias: float = 0.0,
+) -> Image.Image:
+    """y_bias: fraction of cell height added to vertical center (positive = down)."""
     im = Image.new("RGB", (tw, th), BG)
     dr = ImageDraw.Draw(im)
     font = _font(font_px)
     bbox = dr.textbbox((0, 0), ch, font=font)
     wch, hch = bbox[2] - bbox[0], bbox[3] - bbox[1]
     tx = (tw - wch) // 2 - bbox[0]
-    ty = (th - hch) // 2 - bbox[1]
+    ty = (th - hch) // 2 - bbox[1] + int(th * y_bias)
+    # Keep glyph inside the cell
+    if ty + bbox[1] < 0:
+        ty = -bbox[1]
+    if ty + bbox[3] > th:
+        ty = th - bbox[3]
     dr.text((tx, ty), ch, fill=color, font=font)
     return im
 
@@ -57,9 +71,14 @@ def _emit(
     font_px = max(16, min(int(th * fill), tw + 8))
     for d in range(10):
         _glyph(str(d), tw, th, font_px, color).save(folder / f"{base + d}.png")
-    # decimal: SAME cell as digits → no shift/overlap in XX.XX
-    _glyph(".", tw, th, font_px, color).save(folder / f"{base + 10}.png")
-    print(f"Wrote mono {tw}x{th} icons {base}-{base + 10} BG={BG} font={font_px} -> {folder}")
+    # ArtText ICON0 order: [0123456789-.]  → +10 minus, +11 decimal
+    _glyph("-", tw, th, font_px, color).save(folder / f"{base + 10}.png")
+    # Decimal sits on baseline (lower third), not mid-cell
+    _glyph(".", tw, th, font_px, color, y_bias=0.18).save(folder / f"{base + 11}.png")
+    print(
+        f"Wrote mono {tw}x{th} icons {base}-{base + 11} "
+        f"(0-9 - .) BG={BG} font={font_px} -> {folder}"
+    )
 
 
 def main() -> int:

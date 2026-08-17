@@ -27,9 +27,9 @@ void encTim2Begin() {
   TIM2->PSC = 0;
   TIM2->ARR = 0xFFFFFFFFu;
 
-  // IC1=TI1, IC2=TI2 + digital filter (less noise → fewer false reverses)
-  TIM2->CCMR1 = TIM_CCMR1_CC1S_0 | TIM_CCMR1_CC2S_0 |
-                (0x6u << TIM_CCMR1_IC1F_Pos) | (0x6u << TIM_CCMR1_IC2F_Pos);
+  // No digital filter: any ICF>0 drops edges above ~tens of kHz
+  // (Ø8cm × 1000P/R ≈ 44 kHz @ 11 m/s) → false speed collapse on accel.
+  TIM2->CCMR1 = TIM_CCMR1_CC1S_0 | TIM_CCMR1_CC2S_0;
   // Rising-active + enable captures (required for encoder SMS)
   TIM2->CCER = TIM_CCER_CC1E | TIM_CCER_CC2E;
 

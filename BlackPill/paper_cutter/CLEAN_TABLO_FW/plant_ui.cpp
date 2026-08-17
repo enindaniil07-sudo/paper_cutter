@@ -52,34 +52,25 @@ void plantUiPushSettings() {
                         g_cacheEncInvert);
 }
 
-static uint16_t g_brakeHi = 0;
-static bool g_brakeHiFresh = false;
-
-static const uint16_t kSettingsReadVp[] = {
-    VP_BRAKE,
-    (uint16_t)(VP_BRAKE + 1u),
-    VP_BRAKE_ON_MS,
-    VP_BRAKE_OFF_MS,
-    VP_ENC_INVERT,
-};
-static constexpr uint8_t kSettingsReadVpN =
-    (uint8_t)(sizeof(kSettingsReadVp) / sizeof(kSettingsReadVp[0]));
-
 void plantUiRequestSettingsReads() {
-  for (uint8_t i = 0; i < kSettingsReadVpN; ++i) {
-    dwinRequestReadU16(kSettingsReadVp[i]);
-  }
+  // 6090 = LONG: один ReadU32, без гонки HI/LO по двум U16.
+  dwinRequestReadU32(VP_BRAKE);
+  dwinRequestReadU16(VP_BRAKE_ON_MS);
+  dwinRequestReadU16(VP_BRAKE_OFF_MS);
+  dwinRequestReadU16(VP_ENC_INVERT);
 }
 
 void plantUiPullSettings(uint32_t waitMs, DwinVpHandler onVp) {
-  g_brakeHiFresh = false;
-  for (uint8_t i = 0; i < kSettingsReadVpN; ++i) {
-    dwinRequestReadU16(kSettingsReadVp[i]);
-    if (i + 1u < kSettingsReadVpN) {
-      delay(15);
-      dwinPoll(onVp);
-    }
-  }
+  dwinRequestReadU32(VP_BRAKE);
+  delay(20);
+  dwinPoll(onVp);
+  dwinRequestReadU16(VP_BRAKE_ON_MS);
+  delay(15);
+  dwinPoll(onVp);
+  dwinRequestReadU16(VP_BRAKE_OFF_MS);
+  delay(15);
+  dwinPoll(onVp);
+  dwinRequestReadU16(VP_ENC_INVERT);
   const uint32_t t0 = millis();
   while ((millis() - t0) < waitMs) {
     dwinPoll(onVp);
@@ -88,20 +79,25 @@ void plantUiPullSettings(uint32_t waitMs, DwinVpHandler onVp) {
 }
 
 static void applySettingsVp(uint16_t vp, uint32_t value) {
+  bool changed = false;
   if (vp == VP_BRAKE) {
     if (value > MAX_METERS) value = MAX_METERS;
+    changed = (g_plant.brakeM != value);
     g_plant.brakeM = value;
     g_cacheBrake = value;
   } else if (vp == VP_BRAKE_ON_MS) {
     if (value > 9999u) value = 9999u;
+    changed = (g_plant.brakeOnMs != (uint16_t)value);
     g_plant.brakeOnMs = (uint16_t)value;
     g_cacheBrakeOn = (uint16_t)value;
   } else if (vp == VP_BRAKE_OFF_MS) {
     if (value > 9999u) value = 9999u;
+    changed = (g_plant.brakeOffMs != (uint16_t)value);
     g_plant.brakeOffMs = (uint16_t)value;
     g_cacheBrakeOff = (uint16_t)value;
   } else if (vp == VP_ENC_INVERT) {
     const uint16_t bit = (value != 0) ? 1u : 0u;
+    changed = (g_plant.encInvert != (uint8_t)bit);
     g_plant.encInvert = (uint8_t)bit;
     encPathSetInvert((uint8_t)bit);
     if (g_cacheEncInvert != bit) {
@@ -109,25 +105,17 @@ static void applySettingsVp(uint16_t vp, uint32_t value) {
       dwinWriteU16(VP_ENC_INVERT, bit);
     }
   }
+  // Сразу в EEPROM — не терять OK на стр.18, если не нажали НАЗАД.
+  if (changed) settingsSave(g_plant);
 }
 
 void plantUiOnSettingsVp(uint16_t vp, uint32_t value) {
   if (vp == VP_BRAKE) {
-    if (value > 0xFFFFu) {
-      g_brakeHiFresh = false;
-      applySettingsVp(VP_BRAKE, value);
-      return;
-    }
-    g_brakeHi = (uint16_t)value;
-    g_brakeHiFresh = true;
+    applySettingsVp(VP_BRAKE, value);
     return;
   }
-  if (vp == (uint16_t)(VP_BRAKE + 1u) && g_brakeHiFresh) {
-    const uint32_t full = ((uint32_t)g_brakeHi << 16) | (value & 0xFFFFu);
-    g_brakeHiFresh = false;
-    applySettingsVp(VP_BRAKE, full);
-    return;
-  }
+  // Старый опрос VP+1 игнорируем (тормоз читаем только ReadU32 с 6090).
+  if (vp == (uint16_t)(VP_BRAKE + 1u)) return;
   if (vp == VP_BRAKE_ON_MS || vp == VP_BRAKE_OFF_MS || vp == VP_ENC_INVERT) {
     applySettingsVp(vp, value);
   }
@@ -158,7 +146,10 @@ void plantUiForceRemainProgress() {
 }
 
 void plantUiPushSpeed() {
-  dwinWriteU16IfChanged(VP_SPEED, g_plant.speedCms, g_cacheSpeed);
+  // Внутри speedCms = ×0.01 м/с; на панель — ×0.1 (десятые), N=3.1 → «10.8».
+  const uint16_t tenths =
+      (uint16_t)min((uint32_t)(g_plant.speedCms + 5u) / 10u, (uint32_t)9999u);
+  dwinWriteU16IfChanged(VP_SPEED, tenths, g_cacheSpeed);
 }
 
 void plantUiForceSpeedZero() {

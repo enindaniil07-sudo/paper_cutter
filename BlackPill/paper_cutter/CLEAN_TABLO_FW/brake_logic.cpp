@@ -59,9 +59,8 @@ bool brakeLogicShouldArm(uint32_t nowMs) {
     g_brakeLatched = true;
   }
 
-  // Реверс / отказ тормоза — держим ШИМ, пока вал крутится.
-  if (g_q == FsmState::Error &&
-      (g_err == FsmError::Reverse || g_err == FsmError::BrakeIneffective)) {
+  // Отказ тормоза — держим ШИМ, пока вал крутится. Реверс — без тормоза.
+  if (g_q == FsmState::Error && g_err == FsmError::BrakeIneffective) {
     g_brakeLatched = true;
   }
 
@@ -71,12 +70,8 @@ bool brakeLogicShouldArm(uint32_t nowMs) {
     g_brakeSawMotion = true;
   }
 
-  // Полная остановка → отпустить реле (+ сигнал завершения, если тормозили).
-  if (brakeSpeedIsZero()) {
-    releaseLatchAfterStop();
-    return false;
-  }
-
+  // Полная остановка = тишина энкодера ≥ BRAKE_HOLD_IDLE_MS.
+  // Не отпускать только по EMA/speed==0: пустые окна дают ложный job-complete.
   if (!brakeShaftMoving(nowMs)) {
     releaseLatchAfterStop();
     return false;
@@ -110,8 +105,7 @@ static bool brakeEffZoneActive() {
   if (g_brakeLatched) return true;
   if (g_plant.brakeM == 0 || g_plant.targetM == 0) return false;
   if (g_q == FsmState::Run && plantRemainMeters() <= g_plant.brakeM) return true;
-  if (g_q == FsmState::Error &&
-      (g_err == FsmError::Reverse || g_err == FsmError::BrakeIneffective)) {
+  if (g_q == FsmState::Error && g_err == FsmError::BrakeIneffective) {
     return true;
   }
   return false;

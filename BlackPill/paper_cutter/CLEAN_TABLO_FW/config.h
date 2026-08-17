@@ -26,7 +26,8 @@ static constexpr uint16_t BUTTON_DEBOUNCE_MS = 120;
 static constexpr uint16_t TARGET_POLL_MS = 200;
 static constexpr uint16_t SPEED_IDLE_ZERO_MS = 150;
 static constexpr uint16_t RESET_TARGET_LOCK_MS = 5000;
-static constexpr uint8_t SPEED_EMA_N = 4;
+/** 1 = без сглаживания (мгновенная скорость за окно). Раньше 4 давало лаг. */
+static constexpr uint8_t SPEED_EMA_N = 1;
 
 // Reverse: TIM counts (mode 2). 80 counts ≈ 14° shaft @ 2000 counts/rev.
 static constexpr uint8_t ENC_REV_CONFIRM = 80;

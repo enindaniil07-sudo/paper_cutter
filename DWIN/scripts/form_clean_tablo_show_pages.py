@@ -179,6 +179,8 @@ def patch_arttext_widget(
     n_dot: int = 0,
     x: int | None = None,
     y: int | None = None,
+    align: int = 0x01,
+    icon_mode: int = 0,
 ) -> None:
     if s[off] != 0x5A or s[off + 1] != 0x03:
         return
@@ -189,12 +191,12 @@ def patch_arttext_widget(
         struct.pack_into(">H", s, off + 10, y & 0xFFFF)
     struct.pack_into(">H", s, off + 12, icon0 & 0xFFFF)
     s[off + 14] = lib & 0xFF
-    s[off + 15] = 0
+    s[off + 15] = icon_mode & 0xFF
     s[off + 16] = n_int & 0xFF
     s[off + 17] = n_dot & 0xFF
     s[off + 18] = var_type & 0xFF
-    # TxtAlign=1 (right); bit7 isShow0 — выкл → без ведущих нулей («0», не «000»)
-    s[off + 19] = 0x01
+    # low 7 bits = TxtAlign (0 left / 1 right / 2 center); bit7 = isShow0
+    s[off + 19] = align & 0xFF
     s[off + 20] = 0
     struct.pack_into(">H", s, off + 21, 0xFFFF)
 
@@ -207,8 +209,7 @@ SETTINGS_ART = (
     (0x51B0, 0x6096, 4, ART_VAR_UINT16, 732, 286),
 )
 
-# Speed well: same ArtText rules as ЗАДАНО (N_Dot=0 → без ведущих нулей).
-# Y чуть сдвинут — если после прошивки SD цифры не сдвинулись, панель не взяла 14Show.
+# Speed: N=3.1 right @760 — до 999.9 м/с (×0.1), без ведущих нулей (isShow0 off).
 MAIN_ART_XY = {
     0x6000: (368, 56),
     0x6010: (692, 56),
@@ -233,17 +234,16 @@ def rewrite_settings_page17(s: bytearray, ptr: int, *, inv_x: int, inv_y: int) -
 
 def patch_vartypes(s: bytearray) -> int:
     n = 0
-    # (n_int, n_dot, var_type, sp, icon0, lib)
-    # Как ЗАДАНО/ОСТАЛОСЬ: N_Int=5, N_Dot=0, isShow0 off.
-    # (У ArtText с N_Dot>0 на T5L целая часть часто всегда с ведущими 0.)
+    # (n_int, n_dot, var_type, sp, icon0, lib, align, icon_mode)
+    # Скорость: XXX.X (N=3.1), right, isShow0 off — «1.5» / «10.8» / «100.0»
     want = {
-        0x6000: (5, 0, ART_VAR_LONG32, 0x5100, 30, 24),
-        0x6010: (5, 0, ART_VAR_LONG32, 0x5110, 30, 24),
-        0x6020: (5, 0, ART_VAR_UINT16, 0x5120, 30, 24),
-        0x6080: (5, 0, ART_VAR_UINT16, 0x5180, 30, 24),
-        0x6090: (5, 0, ART_VAR_LONG32, 0x5190, 50, 25),
-        0x6094: (4, 0, ART_VAR_UINT16, 0x51A0, 50, 25),
-        0x6096: (4, 0, ART_VAR_UINT16, 0x51B0, 50, 25),
+        0x6000: (5, 0, ART_VAR_LONG32, 0x5100, 30, 24, 0x01, 0),
+        0x6010: (5, 0, ART_VAR_LONG32, 0x5110, 30, 24, 0x01, 0),
+        0x6020: (3, 1, ART_VAR_UINT16, 0x5120, 30, 24, 0x01, 0),
+        0x6080: (5, 0, ART_VAR_UINT16, 0x5180, 30, 24, 0x01, 0),
+        0x6090: (5, 0, ART_VAR_LONG32, 0x5190, 50, 25, 0x01, 0),
+        0x6094: (4, 0, ART_VAR_UINT16, 0x51A0, 50, 25, 0x01, 0),
+        0x6096: (4, 0, ART_VAR_UINT16, 0x51B0, 50, 25, 0x01, 0),
     }
     for off in range(PAYLOAD, len(s) - 31, 32):
         if s[off] != 0x5A or s[off + 1] != 0x03:
@@ -251,7 +251,7 @@ def patch_vartypes(s: bytearray) -> int:
         vp = struct.unpack_from(">H", s, off + 6)[0]
         if vp not in want:
             continue
-        n_int, n_dot, vtype, sp, icon0, lib = want[vp]
+        n_int, n_dot, vtype, sp, icon0, lib, align, icon_mode = want[vp]
         xy = MAIN_ART_XY.get(vp)
         before = bytes(s[off : off + 32])
         patch_arttext_widget(
@@ -265,13 +265,15 @@ def patch_vartypes(s: bytearray) -> int:
             lib=lib,
             x=None if xy is None else xy[0],
             y=None if xy is None else xy[1],
+            align=align,
+            icon_mode=icon_mode,
         )
         if bytes(s[off : off + 32]) != before:
             n += 1
             extra = f" xy={xy}" if xy else ""
             print(
                 f"  VP {vp:04X} @0x{off:04X}: N={n_int}.{n_dot} type={vtype} "
-                f"lib={lib} icon0={icon0}{extra}"
+                f"lib={lib} icon0={icon0} align=0x{align:02X} mode={icon_mode}{extra}"
             )
         else:
             print(f"  VP {vp:04X} @0x{off:04X}: OK")

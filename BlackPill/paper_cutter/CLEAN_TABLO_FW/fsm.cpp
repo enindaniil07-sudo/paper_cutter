@@ -20,6 +20,11 @@ uint16_t fsmLedPeriodMs() {
   return (g_q == FsmState::Run) ? 100u : 450u;
 }
 
+// «Нет энкодера» (стр.12): только после реальных импульсов уже в Run и до тормоза.
+static bool g_encWatchOk = false;
+// После СБРОС не принимать старое ЗАДАНО с панели, пока не прочитали 0.
+static bool g_tgtSawZero = false;
+
 static uint16_t pageForError(FsmError e) {
   switch (e) {
     case FsmError::Reverse: return PAGE_ERR_REVERSE;
@@ -62,8 +67,10 @@ static void actClearPlant() {
   plantUiForceSpeedZero();
   brakeLogicClearLatch();
   brakeEffReset();
-  brakeLogicClearFaultMute();
+  brakeLogicMuteFaults();  // стр.12 только после вращения в новом Run
   g_jobComplete = false;
+  g_encWatchOk = false;
+  g_tgtSawZero = false;
   plantInvalidateCaches();
 
   g_tgtGate = TargetGate::Resetting;
@@ -88,8 +95,7 @@ static void actPrepareRun() {
   encPathClearWindow();
   plantUiForceSpeedZero();
   brakeEffReset();
-  // Mute clears only after real pulses (see fsmMotionTick) — иначе ложный
-  // вход в Run после стопа сразу снимает mute и через 4 с всплывает «нет энкодера».
+  g_encWatchOk = false;  // стр.12 не раньше, чем пойдут импульсы уже в Run
   const uint32_t t = millis();
   encPathSetLastPulseMs(t);
   encPathSyncCntWatch();
@@ -140,11 +146,35 @@ static void leaveKeypadToMain(bool targetTwice) {
   plantUiPushSpeed();
 }
 
+/** Подготовка счёта после СБРОС + новое ЗАДАНО (не вызывать при конце задания). */
+static void actStartFreshJob() {
+  g_jobComplete = false;
+  g_plant.travelM = 0;
+  g_plant.progressPct = 0;
+  encPathClear();
+  encPathClearReverse();
+  encPathClearWindow();
+  brakeLogicClearLatch();
+  brakeEffReset();
+  brakeLogicMuteFaults();
+  g_encWatchOk = false;
+  g_speedEma = 0;
+  plantUiForceSpeedZero();
+}
+
 static void actKbCommit() {
   if (g_plant.kbBuf > MAX_METERS) g_plant.kbBuf = MAX_METERS;
+  // Конец задания держим на экране до СБРОС — новое ЗАДАНО не сбрасывает прогон.
+  if (g_jobComplete) {
+    g_plant.kbBuf = g_plant.targetM;
+    g_plant.kbFresh = true;
+    leaveKeypadToMain(true);
+    return;
+  }
   g_plant.targetM = g_plant.kbBuf;
   g_plant.kbFresh = true;
   g_tgtGate = TargetGate::Normal;
+  if (g_plant.targetM > 0) actStartFreshJob();
   leaveKeypadToMain(true);
 }
 
@@ -178,9 +208,10 @@ static void actTargetClamp() {
   plantUiForceRemainProgress();
 }
 
-/** Конец задачи: выход из Run, счёт заморожен до СБРОС + новый ввод. */
+/** Конец задачи: экран заморожен, пока оператор не нажмёт СБРОС. */
 static void actFinishJob() {
   g_jobComplete = true;
+  g_encWatchOk = false;
   brakeLogicMuteFaults();
   g_speedEma = 0;
   plantUiForceSpeedZero();
@@ -196,10 +227,10 @@ static void actFinishJob() {
 }
 
 static bool tryArmRunFromMotion() {
-  if (g_jobComplete) return false;
+  if (g_jobComplete) return false;  // только СБРОС снимает конец задания
   if (g_plant.targetM == 0) return false;
-  if (g_plant.travelM >= plantTargetCm()) return false;
   if (g_tgtGate != TargetGate::Normal) return false;
+  if (g_plant.travelM >= plantTargetCm()) return false;
   const uint8_t pendingRev = encPathTakeReverseHit();
   actPrepareRun();
   if (pendingRev) encPathSetReverseHit();
@@ -436,6 +467,7 @@ void fsmOnDwinVp(uint16_t vp, uint32_t value) {
 
     if (g_tgtGate == TargetGate::Resetting) {
       if (value == 0) {
+        g_tgtSawZero = true;
         g_tgtGate = TargetGate::Armed;
         g_plant.targetM = 0;
         g_cacheTarget = 0;
@@ -448,20 +480,47 @@ void fsmOnDwinVp(uint16_t vp, uint32_t value) {
 
     if (g_tgtGate == TargetGate::Armed) {
       if (value == 0) {
+        g_tgtSawZero = true;
         g_plant.targetM = 0;
         g_cacheTarget = 0;
+        return;
+      }
+      // Старое ЗАДАНО, оставшееся в VP после СБРОС — не считать новым заданием.
+      if (!g_tgtSawZero) {
+        plantUiWriteTargetZero();
         return;
       }
       g_tgtGate = TargetGate::Normal;
       g_plant.targetM = value;
       g_cacheTarget = value;
+      actStartFreshJob();
       plantUiForceRemainProgress();
       return;
     }
 
+    // Конец работы: цифры на экране до СБРОС, новое ЗАДАНО не стартует прогон.
+    if (g_jobComplete) {
+      if (value != g_plant.targetM) {
+        dwinWriteU32(VP_TARGET, g_plant.targetM);
+        g_cacheTarget = g_plant.targetM;
+      }
+      return;
+    }
+
+    // В Normal не принимать ложный 0 с панели (гонка опроса после ввода).
+    if (value == 0) {
+      if (g_plant.targetM != 0) {
+        dwinWriteU32(VP_TARGET, g_plant.targetM);
+        g_cacheTarget = g_plant.targetM;
+      }
+      return;
+    }
+
     if (value == g_plant.targetM && value == g_cacheTarget) return;
+
     g_plant.targetM = value;
     g_cacheTarget = value;
+    actStartFreshJob();
     plantUiForceRemainProgress();
     return;
   }
@@ -525,6 +584,7 @@ void fsmPollButtons(uint32_t nowMs) {
     if (nowMs - g_tgtResetStartMs >= RESET_TARGET_LOCK_MS) {
       g_tgtGate = TargetGate::Armed;
       plantUiWriteAllZeros();
+      // Не переходить к приёму ЗАДАНО, пока панель не подтвердила 0.
     }
     return;
   }
@@ -566,8 +626,9 @@ void fsmMotionTick(uint32_t nowMs) {
     const uint32_t win = encPathTakePulseWin();
     if (win > 0) {
       encPathSetLastPulseMs(nowMs);
-      // Реальное движение после стопа — снова разрешаем fault-страницы.
-      if (!g_jobComplete && brakeLogicFaultsMuted()) {
+      // Стр.12: импульсы уже в Run и тормоз ещё не включён.
+      if (g_q == FsmState::Run && !g_jobComplete && !brakeLogicIsLatched()) {
+        g_encWatchOk = true;
         brakeLogicClearFaultMute();
       }
     }
@@ -577,12 +638,23 @@ void fsmMotionTick(uint32_t nowMs) {
 
     if (idleStop) {
       plantUiForceSpeedZero();
-    } else if (win > 0) {
-      const uint32_t speedInst =
+    } else if (win == 0) {
+      // Пустое окно: не обнулять (регрессия → провалы 11→1.x). Ждём idleStop.
+    } else {
+      uint32_t speedInst =
           (uint32_t)((win * (uint64_t)NM_PER_COUNT) / ((uint64_t)dtUs * 10ULL));
 
-      g_speedEma =
-          (speedInst + (uint32_t)(SPEED_EMA_N - 1u) * g_speedEma) / SPEED_EMA_N;
+      // Отбраковка явного срыва счёта: за 40 мс нельзя упасть >3× при живых импульсах.
+      if (g_speedEma > 200u && speedInst * 3u < g_speedEma) {
+        speedInst = g_speedEma;
+      }
+
+      // Быстрый рост, более мягкий спад (дрель / краткий недочёт импульсов).
+      if (speedInst >= g_speedEma) {
+        g_speedEma = speedInst;
+      } else {
+        g_speedEma = (speedInst + g_speedEma) / 2u;
+      }
 
       g_plant.speedCms = (uint16_t)min(g_speedEma, (uint32_t)MAX_SPEED_CMS);
       g_speedShown = true;
@@ -591,15 +663,17 @@ void fsmMotionTick(uint32_t nowMs) {
   }
 
   if (g_q == FsmState::Error) {
-    if (g_err == FsmError::Reverse || g_err == FsmError::BrakeIneffective) {
+    if (g_err == FsmError::BrakeIneffective) {
       brakeLogicUpdateRelay(nowMs);
     } else {
+      // Реверс / нет энкодера — реле выкл.
+      brakeLogicClearLatch();
       brakeRelayOff();
     }
     return;
   }
 
-  if (!g_jobComplete && (g_q == FsmState::Idle || g_q == FsmState::Stopped) &&
+  if ((g_q == FsmState::Idle || g_q == FsmState::Stopped) &&
       encPathActivity() && !brakeLogicIsLatched()) {
     tryArmRunFromMotion();
   }
@@ -608,7 +682,8 @@ void fsmMotionTick(uint32_t nowMs) {
     FsmEventData ev{FsmEvent::ReverseDetect, 0};
     fsmDispatch(ev);
     if (g_q == FsmState::Error) {
-      brakeLogicUpdateRelay(nowMs);
+      brakeLogicClearLatch();
+      brakeRelayOff();
       return;
     }
   }
@@ -616,9 +691,13 @@ void fsmMotionTick(uint32_t nowMs) {
   // Импульсы для EncLoss / idle-zero — постоянно.
   encPathNoteCntPulse(nowMs);
 
-  // Во время торможения тишина энкодера ожидаема — не считать потерей сигнала.
-  if (ENC_NO_SIGNAL_ENABLE && g_q == FsmState::Run && !brakeLogicIsLatched() &&
-      !brakeLogicFaultsMuted()) {
+  // Стр.12 только: Run + уже было вращение + тормоз ещё не включён.
+  // Idle / СБРОС / конец задания / зона тормоза — не ошибка.
+  if (brakeLogicIsLatched() || g_jobComplete || g_q != FsmState::Run) {
+    g_encWatchOk = false;
+  }
+  if (ENC_NO_SIGNAL_ENABLE && g_encWatchOk && g_q == FsmState::Run &&
+      !brakeLogicIsLatched() && !brakeLogicFaultsMuted() && !g_jobComplete) {
     const int32_t quietMs = (int32_t)(nowMs - encPathLastPulseMs());
     if (quietMs >= (int32_t)ENC_NO_SIGNAL_MS) {
       FsmEventData ev{FsmEvent::EncLoss, 0};

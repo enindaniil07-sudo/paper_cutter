@@ -14,7 +14,7 @@
 |------|-----|--------|
 | Задано | 6000 | ArtTextShow + VarInput→10 |
 | Осталось | 6010 | ArtTextShow |
-| Скорость м/с | 6020 | ArtTextShow ×0.01 |
+| Скорость м/с | 6020 | ArtTextShow ×0.1, N=3.1 (1.5 / 10.8) |
 | СТОП / СБРОС | 6051 / 6052 | BitButton |
 | Шестерёнка | 6055 | BitButton Pic_Next=17 |
 | НАЗАД (настр.) | 6056 | BitButton Pic_Next=0 |
