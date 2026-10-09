@@ -34,7 +34,7 @@ struct FsmEventData {
 struct PlantData {
   uint32_t targetM;      // ЗАДАНО, целые метры
   uint32_t travelM;      // пройдено, ×0.01 м (125 = 1.25 м)
-  uint16_t speedCms;     // внутри ×0.01 м/с; на DWIN пишется ×0.1 (десятые)
+  uint16_t speedCms;     // внутри ×0.01 м/с; на DWIN пишутся об/мин
   uint16_t progressPct;  // 0..100
   uint32_t kbBuf;
   bool kbFresh;

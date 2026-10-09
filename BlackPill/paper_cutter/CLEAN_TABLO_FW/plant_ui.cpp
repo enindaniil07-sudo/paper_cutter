@@ -104,13 +104,14 @@ uint16_t plantUiProgressPct() {
 }
 
 void plantUiPushTravel() {
-  dwinWriteU32IfChanged(VP_TRAVEL, plantRemainMeters(), g_cacheRemain);
+  const uint32_t r = (uint32_t)plantRemainMetersSigned();
+  dwinWriteU32IfChanged(VP_TRAVEL, r, g_cacheRemain);
   g_plant.progressPct = plantUiProgressPct();
   dwinWriteU16IfChanged(VP_PROGRESS, g_plant.progressPct, g_cacheProgress);
 }
 
 void plantUiForceRemainProgress() {
-  const uint32_t r = plantRemainMeters();
+  const uint32_t r = (uint32_t)plantRemainMetersSigned();
   const uint16_t p = plantUiProgressPct();
   g_plant.progressPct = p;
   dwinWriteU32(VP_TRAVEL, r);
@@ -120,15 +121,14 @@ void plantUiForceRemainProgress() {
 }
 
 void plantUiPushSpeed() {
-  // Внутри speedCms = ×0.01 м/с; на панель — ×0.1 (десятые), N=3.1 → «10.8».
-  const uint16_t tenths =
-      (uint16_t)min((uint32_t)(g_plant.speedCms + 5u) / 10u, (uint32_t)9999u);
-  dwinWriteU16IfChanged(VP_SPEED, tenths, g_cacheSpeed);
+  dwinWriteU16IfChanged(VP_SPEED, (uint16_t)min(g_rpmEma, (uint32_t)9999u),
+                        g_cacheSpeed);
 }
 
 void plantUiForceSpeedZero() {
   g_plant.speedCms = 0;
   g_speedEma = 0;
+  g_rpmEma = 0;
   if (g_speedShown || g_cacheSpeed != 0) {
     dwinWriteU16(VP_SPEED, 0);
     g_cacheSpeed = 0;

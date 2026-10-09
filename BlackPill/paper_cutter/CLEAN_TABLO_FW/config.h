@@ -25,14 +25,16 @@ static constexpr uint32_t MAX_METERS = 99999u;
 static constexpr uint16_t MAX_SPEED_CMS = 65535;  // U16 max ≈ 655.35 м/с (панель XXX.XX)
 
 static constexpr uint16_t SPEED_PERIOD_MS = 40;
+/** Окно усреднения оборотов (~4 тика опроса) — меньше квантования ±1 тик. */
+static constexpr uint32_t SPEED_AVG_US = 160000u;
 static constexpr uint16_t TRAVEL_PERIOD_MS = 50;
 static constexpr uint16_t BUTTON_POLL_MS = 40;
 static constexpr uint16_t BUTTON_DEBOUNCE_MS = 120;
 static constexpr uint16_t TARGET_POLL_MS = 200;
 static constexpr uint16_t SPEED_IDLE_ZERO_MS = 150;
 static constexpr uint16_t RESET_TARGET_LOCK_MS = 5000;
-/** 1 = без сглаживания (мгновенная скорость за окно). Раньше 4 давало лаг. */
-static constexpr uint8_t SPEED_EMA_N = 1;
+/** EMA оборотов: new = (N-1)/N * old + 1/N * inst. 4 ≈ стабильно без заметного лага. */
+static constexpr uint8_t SPEED_EMA_N = 4;
 
 // TIM2_CH1 / TIM2_CH2 — PA0/PA1 (PA2/PA3 busy: USART2 ↔ DWIN).
 static constexpr int PIN_LED = PC13;

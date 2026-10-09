@@ -46,16 +46,19 @@ static void releaseLatchAfterStop() {
   g_brakeLatched = false;
   g_brakeSawMotion = false;
   if (complete) {
+    // После тормоза вал встал: реле дальше снаружи, MCU только считает.
+    g_brakeHoldOff = true;
     g_stopCompletePending = true;
     g_faultsMuted = true;
     brakeEffReset();
+    brakeRelayOff();
   }
 }
 
 bool brakeLogicShouldArm(uint32_t nowMs) {
-  // Distance zone (настройки «торм. м») — только в Run.
-  if (g_plant.brakeM > 0 && g_q == FsmState::Run && g_plant.targetM > 0 &&
-      plantRemainMeters() <= g_plant.brakeM) {
+  // Distance zone (настройки «торм. м») — только в Run, не после СТОП/докрутки.
+  if (!g_brakeHoldOff && g_plant.brakeM > 0 && g_q == FsmState::Run &&
+      g_plant.targetM > 0 && plantRemainMeters() <= g_plant.brakeM) {
     g_brakeLatched = true;
   }
 
@@ -102,6 +105,7 @@ static uint32_t brakeEffSpeedCms() {
 
 static bool brakeEffZoneActive() {
   // g_faultsMuted — только EncLoss после стопа/сброса; зону тормоза не глушим.
+  if (g_brakeHoldOff) return false;
   if (g_brakeLatched) return true;
   if (g_plant.brakeM == 0 || g_plant.targetM == 0) return false;
   if (g_q == FsmState::Run && plantRemainMeters() <= g_plant.brakeM) return true;

@@ -73,6 +73,7 @@ static void actClearPlant() {
   brakeLogicMuteFaults();  // стр.12 только после вращения в новом Run
   g_err = FsmError::None;
   g_jobComplete = false;
+  g_brakeHoldOff = false;
   g_encWatchOk = false;
   g_tgtSawZero = false;
   closeSettingsUi();
@@ -153,6 +154,7 @@ static void leaveKeypadToMain(bool targetTwice) {
 /** Подготовка счёта после СБРОС + новое ЗАДАНО (не вызывать при конце задания). */
 static void actStartFreshJob() {
   g_jobComplete = false;
+  g_brakeHoldOff = false;
   g_plant.travelM = 0;
   g_plant.progressPct = 0;
   encPathClear();
@@ -205,25 +207,14 @@ static void actSettingsBack() {
   plantUiPushSpeed();
 }
 
-static void actTargetClamp() {
-  g_plant.travelM = plantTargetCm();
-  plantUiForceRemainProgress();
-}
-
-/** Конец задачи: экран заморожен, пока оператор не нажмёт СБРОС. */
+/** Конец задачи: счёт «осталось» живой (после переезда — минус). СБРОС обнуляет. */
 static void actFinishJob() {
   g_jobComplete = true;
   g_encWatchOk = false;
   brakeLogicMuteFaults();
   g_speedEma = 0;
   plantUiForceSpeedZero();
-  if (g_plant.targetM > 0 && g_plant.travelM > plantTargetCm()) {
-    actTargetClamp();
-  } else {
-    plantUiForceRemainProgress();
-  }
-  // Путь обнуляем — travel уже в g_plant; дальше encPath не подмешиваем.
-  encPathClear();
+  plantUiForceRemainProgress();
   if (g_settingsUi) {
     closeSettingsUi();
     dwinSetPage(PAGE_MAIN);
@@ -287,8 +278,14 @@ static void fsmDispatch(const FsmEventData& ev) {
         plantUiForceSpeedZero();
         qn = FsmState::Error;
       } else if (g_q == FsmState::Run || g_q == FsmState::Stopped) {
-        // СТОП → ШИМ тормоза (настройки on/off мс) до полной остановки вала.
-        brakeLogicArmLatch();
+        // СТОП = пауза без тормоза; дальше докрутка вручную, зона тормоза выкл.
+        if (!g_jobComplete) {
+          g_brakeHoldOff = true;
+          brakeLogicClearLatch();
+          brakeEffReset();
+          brakeRelayOff();
+        }
+        plantUiForceSpeedZero();
         qn = FsmState::Stopped;
       } else if (g_q == FsmState::Idle || g_q == FsmState::Keypad) {
         plantUiForceSpeedZero();
@@ -362,9 +359,9 @@ static void fsmDispatch(const FsmEventData& ev) {
         dwinSetPage(PAGE_MAIN);
         delay(20);
       }
-      actTargetClamp();
+      plantUiForceRemainProgress();
       qn = FsmState::Stopped;
-      g_jobComplete = true;  // счёт закрыт; дотормаживание путь не двигает
+      g_jobComplete = true;  // длина набрана; дальше «осталось» уходит в минус
       // Не глушить BrakeIneffective: как раз во время дотормаживания нужна стр.16.
       // EncLoss и так закрыт (jobComplete / latch / не Run).
       // Нет зоны торможения → сразу тройной пик; иначе — когда вал встанет.
@@ -603,6 +600,8 @@ void fsmMotionTick(uint32_t nowMs) {
   static uint32_t lastSpeedMs = 0;
   static uint32_t lastSpeedUs = 0;
   static uint32_t lastTravelMs = 0;
+  static uint32_t accWin = 0;
+  static uint32_t accDtUs = 0;
 
   encPathPoll(nowMs);
 
@@ -636,33 +635,44 @@ void fsmMotionTick(uint32_t nowMs) {
     const bool idleStop = (sincePulse >= (int32_t)SPEED_IDLE_ZERO_MS);
 
     if (idleStop) {
+      accWin = 0;
+      accDtUs = 0;
       plantUiForceSpeedZero();
     } else if (win == 0) {
       // Пустое окно: не обнулять (регрессия → провалы 11→1.x). Ждём idleStop.
     } else {
-      uint32_t speedInst =
-          (uint32_t)((win * (uint64_t)NM_PER_COUNT) / ((uint64_t)dtUs * 10ULL));
+      accWin += win;
+      accDtUs += dtUs;
+      if (accDtUs >= SPEED_AVG_US) {
+        // об/мин = Δтики × 60e6 / (тиков/оборот × Δt_мкс)
+        uint32_t rpmInst = (uint32_t)(
+            (accWin * 60000000ULL +
+             ((uint64_t)TIM_COUNTS_PER_REV * accDtUs) / 2u) /
+            ((uint64_t)TIM_COUNTS_PER_REV * accDtUs));
+        accWin = 0;
+        accDtUs = 0;
 
-      // Отбраковка явного срыва счёта: за 40 мс нельзя упасть >3× при живых импульсах.
-      if (g_speedEma > 200u && speedInst * 3u < g_speedEma) {
-        speedInst = g_speedEma;
-      }
-      // Потолок после EEPROM/инверсии: >30 м/с на Ø8см — мусор, не физика.
-      if (speedInst > 3000u) {
-        encPathClearWindow();
-        speedInst = g_speedEma;
-      }
+        if (g_rpmEma > 20u && rpmInst * 3u < g_rpmEma) {
+          rpmInst = g_rpmEma;
+        }
+        if (rpmInst > 9999u) {
+          encPathClearWindow();
+          rpmInst = g_rpmEma;
+        }
 
-      // Быстрый рост, более мягкий спад (дрель / краткий недочёт импульсов).
-      if (speedInst >= g_speedEma) {
-        g_speedEma = speedInst;
-      } else {
-        g_speedEma = (speedInst + g_speedEma) / 2u;
-      }
+        if (g_rpmEma == 0) {
+          g_rpmEma = rpmInst;
+        } else {
+          g_rpmEma = (g_rpmEma * (uint32_t)(SPEED_EMA_N - 1u) + rpmInst) /
+                     (uint32_t)SPEED_EMA_N;
+        }
 
-      g_plant.speedCms = (uint16_t)min(g_speedEma, (uint32_t)MAX_SPEED_CMS);
-      g_speedShown = true;
-      plantUiPushSpeed();
+        g_speedEma = (uint32_t)(((uint64_t)g_rpmEma * WHEEL_CIRC_NM + 300000000ULL) /
+                                600000000ULL);
+        g_plant.speedCms = (uint16_t)min(g_speedEma, (uint32_t)MAX_SPEED_CMS);
+        g_speedShown = true;
+        plantUiPushSpeed();
+      }
     }
   }
 
@@ -704,15 +714,16 @@ void fsmMotionTick(uint32_t nowMs) {
   if (nowMs - lastTravelMs >= TRAVEL_PERIOD_MS) {
     lastTravelMs = nowMs;
 
-    // Считаем только в работе / пока дотормаживаем; после конца задачи — заморозка.
-    if (!g_jobComplete &&
-        (g_q == FsmState::Run || brakeLogicIsLatched())) {
+    // Счёт пути: в Run / на тормозе / после конца задания (переезд → минус).
+    if (g_plant.targetM > 0 && g_tgtGate == TargetGate::Normal &&
+        (g_q == FsmState::Run || brakeLogicIsLatched() ||
+         (g_jobComplete && g_q == FsmState::Stopped))) {
       g_plant.travelM = encPathTravelCm();
       if (g_q != FsmState::Keypad) {
         plantUiPushTravel();
       }
 
-      if (g_q == FsmState::Run && g_plant.targetM > 0 &&
+      if (!g_jobComplete && g_q == FsmState::Run &&
           g_plant.travelM >= plantTargetCm()) {
         FsmEventData ev{FsmEvent::TargetDone, 0};
         fsmDispatch(ev);
@@ -732,10 +743,16 @@ void fsmMotionTick(uint32_t nowMs) {
 
   brakeLogicUpdateRelay(nowMs);
 
-  // Реле тормоза отработало до 0 → задача выполнена, выход из режима работы.
+  // Тормоз отпустил вал. Закрываем задание только если длина уже набрана;
+  // после СТОП (пауза) — остаёмся в работе, можно докрутить оставшееся.
   if (brakeLogicTakeStopComplete()) {
-    dwinBuzzStopTriple();
-    actFinishJob();
+    const bool targetReached =
+        g_jobComplete ||
+        (g_plant.targetM > 0 && g_plant.travelM >= plantTargetCm());
+    if (targetReached) {
+      dwinBuzzStopTriple();
+      actFinishJob();
+    }
   }
 }
 

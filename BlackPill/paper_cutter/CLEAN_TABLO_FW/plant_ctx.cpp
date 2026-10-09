@@ -5,9 +5,11 @@ PlantData g_plant = {};
 FsmState g_q = FsmState::Idle;
 FsmError g_err = FsmError::None;
 uint32_t g_speedEma = 0;
+uint32_t g_rpmEma = 0;
 bool g_speedShown = false;
 bool g_brakeLatched = false;
 bool g_jobComplete = false;
+bool g_brakeHoldOff = false;
 bool g_settingsUi = false;
 
 TargetGate g_tgtGate = TargetGate::Normal;
@@ -24,10 +26,17 @@ uint16_t g_cacheBrakeOff = 0xFFFF;
 
 uint32_t plantTargetCm() { return g_plant.targetM * 100u; }
 
+int32_t plantRemainMetersSigned() {
+  const int32_t doneM = (int32_t)(g_plant.travelM / 100u);
+  int32_t rem = (int32_t)g_plant.targetM - doneM;
+  if (rem > (int32_t)MAX_METERS) rem = (int32_t)MAX_METERS;
+  if (rem < -(int32_t)MAX_METERS) rem = -(int32_t)MAX_METERS;
+  return rem;
+}
+
 uint32_t plantRemainMeters() {
-  const uint32_t doneM = g_plant.travelM / 100u;
-  if (g_plant.targetM <= doneM) return 0;
-  return g_plant.targetM - doneM;
+  const int32_t rem = plantRemainMetersSigned();
+  return rem > 0 ? (uint32_t)rem : 0;
 }
 
 void plantInvalidateCaches() {

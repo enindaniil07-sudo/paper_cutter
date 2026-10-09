@@ -185,7 +185,7 @@ SETTINGS_ART = (
     (0x51B0, 0x6096, 4, ART_VAR_UINT16, 732, 286),
 )
 
-# Speed: N=3.1 right @760 — до 999.9 м/с (×0.1), без ведущих нулей (isShow0 off).
+# RPM: N=4.0 right @760 — целые об/мин, без ведущих нулей (isShow0 off).
 MAIN_ART_XY = {
     0x6000: (368, 56),
     0x6010: (692, 56),
@@ -210,11 +210,11 @@ def rewrite_settings_page17(s: bytearray, ptr: int) -> None:
 def patch_vartypes(s: bytearray) -> int:
     n = 0
     # (n_int, n_dot, var_type, sp, icon0, lib, align, icon_mode)
-    # Скорость: XXX.X (N=3.1), right, isShow0 off — «1.5» / «10.8» / «100.0»
+    # Обороты: XXXX об/мин (N=4.0), right, isShow0 off
     want = {
         0x6000: (5, 0, ART_VAR_LONG32, 0x5100, 30, 24, 0x01, 0),
         0x6010: (5, 0, ART_VAR_LONG32, 0x5110, 30, 24, 0x01, 0),
-        0x6020: (3, 1, ART_VAR_UINT16, 0x5120, 30, 24, 0x01, 0),
+        0x6020: (4, 0, ART_VAR_UINT16, 0x5120, 30, 24, 0x01, 0),
         0x6080: (5, 0, ART_VAR_UINT16, 0x5180, 30, 24, 0x01, 0),
         0x6090: (5, 0, ART_VAR_LONG32, 0x5190, 50, 25, 0x01, 0),
         0x6094: (4, 0, ART_VAR_UINT16, 0x51A0, 50, 25, 0x01, 0),
