@@ -1,7 +1,7 @@
 {
   "screen": { "width": 800, "height": 480 },
   "meta": {
-    "description": "CLEAN_TABLO — settings: brake, PWM, encoder invert",
+    "description": "CLEAN_TABLO — settings: brake distance and PWM",
     "theme": "soft-glass",
     "keypad_page": 10,
     "settings_page": 17,
@@ -47,9 +47,6 @@
     "set_val_on": { "x": 460, "y": 186, "w": 280, "h": 56 },
     "set_row_off": { "x": 24, "y": 268, "w": 752, "h": 88 },
     "set_val_off": { "x": 460, "y": 284, "w": 280, "h": 56 },
-
-    "set_row_dir": { "x": 24, "y": 366, "w": 752, "h": 88 },
-    "btn_enc_invert": { "x": 540, "y": 382, "w": 220, "h": 56 },
 
     "set_edit_display": { "x": 40, "y": 22, "w": 720, "h": 100 },
     "set_edit_1": { "x": 40, "y": 152, "w": 168, "h": 68 },

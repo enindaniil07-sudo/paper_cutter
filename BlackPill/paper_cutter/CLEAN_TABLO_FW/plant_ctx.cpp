@@ -8,6 +8,7 @@ uint32_t g_speedEma = 0;
 bool g_speedShown = false;
 bool g_brakeLatched = false;
 bool g_jobComplete = false;
+bool g_settingsUi = false;
 
 TargetGate g_tgtGate = TargetGate::Normal;
 uint32_t g_tgtResetStartMs = 0;
@@ -20,7 +21,6 @@ uint16_t g_cacheKb = 0xFFFF;
 uint32_t g_cacheBrake = 0xFFFFFFFFu;
 uint16_t g_cacheBrakeOn = 0xFFFF;
 uint16_t g_cacheBrakeOff = 0xFFFF;
-uint16_t g_cacheEncInvert = 0xFFFF;
 
 uint32_t plantTargetCm() { return g_plant.targetM * 100u; }
 
@@ -35,5 +35,4 @@ void plantInvalidateCaches() {
   g_cacheSpeed = g_cacheProgress = g_cacheKb = 0xFFFF;
   g_cacheBrake = 0xFFFFFFFFu;
   g_cacheBrakeOn = g_cacheBrakeOff = 0xFFFF;
-  g_cacheEncInvert = 0xFFFF;
 }

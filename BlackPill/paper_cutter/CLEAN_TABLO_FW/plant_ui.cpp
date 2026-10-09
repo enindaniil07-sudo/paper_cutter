@@ -1,7 +1,6 @@
 #include "plant_ui.h"
 #include "config.h"
 #include "plant_ctx.h"
-#include "enc_path.h"
 #include "settings_store.h"
 
 static void dwinWriteU16x2(uint16_t vp, uint16_t value) {
@@ -48,8 +47,6 @@ void plantUiPushSettings() {
                         g_cacheBrake);
   dwinWriteU16IfChanged(VP_BRAKE_ON_MS, g_plant.brakeOnMs, g_cacheBrakeOn);
   dwinWriteU16IfChanged(VP_BRAKE_OFF_MS, g_plant.brakeOffMs, g_cacheBrakeOff);
-  dwinWriteU16IfChanged(VP_ENC_INVERT, g_plant.encInvert ? 1u : 0u,
-                        g_cacheEncInvert);
 }
 
 void plantUiRequestSettingsReads() {
@@ -57,56 +54,34 @@ void plantUiRequestSettingsReads() {
   dwinRequestReadU32(VP_BRAKE);
   dwinRequestReadU16(VP_BRAKE_ON_MS);
   dwinRequestReadU16(VP_BRAKE_OFF_MS);
-  dwinRequestReadU16(VP_ENC_INVERT);
 }
 
 void plantUiPullSettings(uint32_t waitMs, DwinVpHandler onVp) {
-  dwinRequestReadU32(VP_BRAKE);
-  delay(20);
-  dwinPoll(onVp);
-  dwinRequestReadU16(VP_BRAKE_ON_MS);
-  delay(15);
-  dwinPoll(onVp);
-  dwinRequestReadU16(VP_BRAKE_OFF_MS);
-  delay(15);
-  dwinPoll(onVp);
-  dwinRequestReadU16(VP_ENC_INVERT);
+  // Все Read сразу, без delay между ними — не стопаем loop на flash/UART.
+  plantUiRequestSettingsReads();
   const uint32_t t0 = millis();
   while ((millis() - t0) < waitMs) {
     dwinPoll(onVp);
   }
+  // Одна запись EEPROM на выход из UI (не на каждый OK ввода).
   settingsSave(g_plant);
 }
 
 static void applySettingsVp(uint16_t vp, uint32_t value) {
-  bool changed = false;
+  // Только RAM + кэш VP. Persist — при выходе (plantUiPullSettings / SettingsBack).
   if (vp == VP_BRAKE) {
     if (value > MAX_METERS) value = MAX_METERS;
-    changed = (g_plant.brakeM != value);
     g_plant.brakeM = value;
     g_cacheBrake = value;
   } else if (vp == VP_BRAKE_ON_MS) {
     if (value > 9999u) value = 9999u;
-    changed = (g_plant.brakeOnMs != (uint16_t)value);
     g_plant.brakeOnMs = (uint16_t)value;
     g_cacheBrakeOn = (uint16_t)value;
   } else if (vp == VP_BRAKE_OFF_MS) {
     if (value > 9999u) value = 9999u;
-    changed = (g_plant.brakeOffMs != (uint16_t)value);
     g_plant.brakeOffMs = (uint16_t)value;
     g_cacheBrakeOff = (uint16_t)value;
-  } else if (vp == VP_ENC_INVERT) {
-    const uint16_t bit = (value != 0) ? 1u : 0u;
-    changed = (g_plant.encInvert != (uint8_t)bit);
-    g_plant.encInvert = (uint8_t)bit;
-    encPathSetInvert((uint8_t)bit);
-    if (g_cacheEncInvert != bit) {
-      g_cacheEncInvert = bit;
-      dwinWriteU16(VP_ENC_INVERT, bit);
-    }
   }
-  // Сразу в EEPROM — не терять OK на стр.18, если не нажали НАЗАД.
-  if (changed) settingsSave(g_plant);
 }
 
 void plantUiOnSettingsVp(uint16_t vp, uint32_t value) {
@@ -114,9 +89,8 @@ void plantUiOnSettingsVp(uint16_t vp, uint32_t value) {
     applySettingsVp(VP_BRAKE, value);
     return;
   }
-  // Старый опрос VP+1 игнорируем (тормоз читаем только ReadU32 с 6090).
   if (vp == (uint16_t)(VP_BRAKE + 1u)) return;
-  if (vp == VP_BRAKE_ON_MS || vp == VP_BRAKE_OFF_MS || vp == VP_ENC_INVERT) {
+  if (vp == VP_BRAKE_ON_MS || vp == VP_BRAKE_OFF_MS) {
     applySettingsVp(vp, value);
   }
 }

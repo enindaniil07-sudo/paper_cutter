@@ -86,7 +86,7 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 # Sync all page BMPs into DWIN_SET (for DGUS / inspection) then pack ICL
-$pageIds = @(0, 1, 2, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19)
+$pageIds = @(0, 1, 2, 10, 12, 13, 14, 15, 16, 17, 18)
 $tftDir = Join-Path $Root "TFT"
 New-Item -ItemType Directory -Force -Path $tftDir | Out-Null
 foreach ($i in $pageIds) {
@@ -100,15 +100,22 @@ foreach ($i in $pageIds) {
 Remove-Item (Join-Path $dstSet "04.bmp") -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $Root "04.bmp") -Force -ErrorAction SilentlyContinue
 
-& python (Join-Path $Repo "scripts\pack_dwin_set_screen_to_icl.py") --project $Root --icl-id 32 --bmps "00.bmp,01.bmp,02.bmp,10.bmp,11.bmp,12.bmp,13.bmp,14.bmp,15.bmp,16.bmp,17.bmp,18.bmp,19.bmp" --quality 92
+& python (Join-Path $Repo "scripts\pack_dwin_set_screen_to_icl.py") --project $Root --icl-id 32 --bmps "00.bmp,01.bmp,02.bmp,10.bmp,12.bmp,13.bmp,14.bmp,15.bmp,16.bmp,17.bmp,18.bmp" --quality 92
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-# Sticky ИНВЕРСИЯ icons (VP 6098 IconShow)
-& python (Join-Path $Repo "scripts\images_to_icl.py") -o (Join-Path $dstSet "27.icl") --icl-id 27 --quality 95 --align-head-kb 32 --lib-size-kb 256 --chroma 444 (Join-Path $Root "image\invert_btn\00.bmp") (Join-Path $Root "image\invert_btn\01.bmp")
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+# no invert IconShow (27.icl removed)
 Remove-Item (Join-Path $dstSet "03.bmp") -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $Root "03.bmp") -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $dstSet "23.icl") -Force -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $dstSet "27.icl") -Force -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $dstSet "11.bmp") -Force -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $Root "11.bmp") -Force -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $dstSet "19.bmp") -Force -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $Root "19.bmp") -Force -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $Root "image\11.bmp") -Force -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $Root "image\19.bmp") -Force -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $Root "image\invert_btn") -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $dstSet "invert_btn") -Recurse -Force -ErrorAction SilentlyContinue
 $hmi = Join-Path $Root "DWprj.hmi"
 if (-not (Test-Path $hmi)) {
     $template = Join-Path $srcProj "DWprj.hmi"
@@ -164,13 +171,15 @@ if (Test-Path $fwDir) {
 
 Write-Host 'OK: CLEAN_TABLO; BMPs kept; 14Show LONG32 VP6000/6010 — sync F:\ and F:\DWIN_SET' -ForegroundColor Green
 
-# Always mirror flash show to SD if present (panel often reads F:\DWIN_SET)
+# Mirror HMI assets to SD if present (panel often reads F:\DWIN_SET)
 if (Test-Path 'F:\') {
-    $show = Join-Path $dstSet '14ShowFile.bin'
-    if (Test-Path $show) {
-        Copy-Item $show 'F:\14ShowFile.bin' -Force
-        New-Item -ItemType Directory -Path 'F:\DWIN_SET' -Force | Out-Null
-        Copy-Item $show 'F:\DWIN_SET\14ShowFile.bin' -Force
-        Write-Host 'Synced 14ShowFile.bin -> F:\ and F:\DWIN_SET'
+    New-Item -ItemType Directory -Path 'F:\DWIN_SET' -Force | Out-Null
+    foreach ($f in @('13TouchFile.bin', '14ShowFile.bin', '24.icl', '25.icl')) {
+        $src = Join-Path $dstSet $f
+        if (Test-Path $src) {
+            Copy-Item $src "F:\$f" -Force
+            Copy-Item $src "F:\DWIN_SET\$f" -Force
+            Write-Host "Synced $f -> F:\ and F:\DWIN_SET"
+        }
     }
 }

@@ -1,7 +1,7 @@
 /*
   CLEAN_TABLO_FW — Black Pill F411CE ↔ CLEAN_TABLO (DWIN)
 
-  Autonics E40S6-1000-3-T-24: 1000 P/R на A, колесо Ø 8 см.
+  Autonics E50S8-2500-3-T-24: 2500 P/R на A, колесо Ø 8 см.
   Энкодер: TIM2 encoder mode, A=PA0, B=PA1.
   Ошибки: стр. 11 реверс, 12 нет сигнала, 16 тормоз не действует.
   OK = VP 6054.

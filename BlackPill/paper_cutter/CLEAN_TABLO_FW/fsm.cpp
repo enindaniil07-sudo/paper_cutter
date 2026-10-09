@@ -27,14 +27,18 @@ static bool g_tgtSawZero = false;
 
 static uint16_t pageForError(FsmError e) {
   switch (e) {
-    case FsmError::Reverse: return PAGE_ERR_REVERSE;
     case FsmError::NoEncoder: return PAGE_ERR_NO_ENC;
     case FsmError::BrakeIneffective: return PAGE_ERR_BRAKE;
-    default: return PAGE_ERR_REVERSE;
+    default: return PAGE_ERR_NO_ENC;
   }
 }
 
+static void closeSettingsUi() {
+  g_settingsUi = false;
+}
+
 static void actShowError(FsmError kind) {
+  closeSettingsUi();
   plantUiForceSpeedZero();
   encPathClearWindow();
   g_err = kind;
@@ -43,7 +47,6 @@ static void actShowError(FsmError kind) {
 }
 
 static void actDismissError() {
-  encPathClearReverse();
   g_err = FsmError::None;
   brakeEffReset();
   encPathClearWindow();
@@ -68,9 +71,11 @@ static void actClearPlant() {
   brakeLogicClearLatch();
   brakeEffReset();
   brakeLogicMuteFaults();  // стр.12 только после вращения в новом Run
+  g_err = FsmError::None;
   g_jobComplete = false;
   g_encWatchOk = false;
   g_tgtSawZero = false;
+  closeSettingsUi();
   plantInvalidateCaches();
 
   g_tgtGate = TargetGate::Resetting;
@@ -99,7 +104,6 @@ static void actPrepareRun() {
   const uint32_t t = millis();
   encPathSetLastPulseMs(t);
   encPathSyncCntWatch();
-  encPathClearReverse();
 }
 
 static void actKbOpen() {
@@ -152,7 +156,6 @@ static void actStartFreshJob() {
   g_plant.travelM = 0;
   g_plant.progressPct = 0;
   encPathClear();
-  encPathClearReverse();
   encPathClearWindow();
   brakeLogicClearLatch();
   brakeEffReset();
@@ -185,17 +188,16 @@ static void actKbCancel() {
 }
 
 static void actSettingsOpen() {
-  plantUiForceSpeedZero();
   // Pic_Next=17 already switched — do not dwinSetPage (layer fight).
-  delay(30);
+  // Только тормоз — Run/счёт/прогресс не трогаем.
   g_cacheBrake = 0xFFFFFFFFu;
   g_cacheBrakeOn = g_cacheBrakeOff = 0xFFFF;
-  g_cacheEncInvert = 0xFFFF;
   plantUiPushSettings();
 }
 
 static void actSettingsBack() {
-  plantUiPullSettings(200, fsmOnDwinVp);
+  plantUiPullSettings(50, fsmOnDwinVp);
+  closeSettingsUi();
   plantInvalidateCaches();
   dwinWriteU32(VP_TARGET, g_plant.targetM);
   g_cacheTarget = g_plant.targetM;
@@ -222,7 +224,11 @@ static void actFinishJob() {
   }
   // Путь обнуляем — travel уже в g_plant; дальше encPath не подмешиваем.
   encPathClear();
-  encPathClearReverse();
+  if (g_settingsUi) {
+    closeSettingsUi();
+    dwinSetPage(PAGE_MAIN);
+    delay(20);
+  }
   g_q = FsmState::Stopped;
 }
 
@@ -231,31 +237,20 @@ static bool tryArmRunFromMotion() {
   if (g_plant.targetM == 0) return false;
   if (g_tgtGate != TargetGate::Normal) return false;
   if (g_plant.travelM >= plantTargetCm()) return false;
-  const uint8_t pendingRev = encPathTakeReverseHit();
   actPrepareRun();
-  if (pendingRev) encPathSetReverseHit();
   g_q = FsmState::Run;
   return true;
 }
 
 static void fsmDispatch(const FsmEventData& ev) {
-  // Sensor / brake faults before UI transitions.
-  if (ev.type == FsmEvent::BrakeIneffectiveDetect ||
-      ev.type == FsmEvent::ReverseDetect ||
-      ev.type == FsmEvent::EncLoss) {
+  // EncLoss можно глушить после стопа; отказ тормоза — нет.
+  if (ev.type == FsmEvent::EncLoss) {
     if (brakeLogicFaultsMuted()) return;
   }
 
   if (ev.type == FsmEvent::BrakeIneffectiveDetect) {
     if (g_q == FsmState::Run || g_q == FsmState::Stopped) {
       actShowError(FsmError::BrakeIneffective);
-      g_q = FsmState::Error;
-    }
-    return;
-  }
-  if (ev.type == FsmEvent::ReverseDetect) {
-    if (g_q == FsmState::Run) {
-      actShowError(FsmError::Reverse);
       g_q = FsmState::Error;
     }
     return;
@@ -272,7 +267,7 @@ static void fsmDispatch(const FsmEventData& ev) {
   const bool isKb = ev.type == FsmEvent::KbDigit || ev.type == FsmEvent::KbDel ||
                     ev.type == FsmEvent::KbOk || ev.type == FsmEvent::KbCancel;
   if (isKb && g_q != FsmState::Keypad && g_q != FsmState::Error &&
-      g_q != FsmState::Settings) {
+      !g_settingsUi) {
     actKbOpen();
     g_q = FsmState::Keypad;
   }
@@ -281,12 +276,14 @@ static void fsmDispatch(const FsmEventData& ev) {
 
   switch (ev.type) {
     case FsmEvent::Stop:
-      if (g_q == FsmState::Settings) {
-        plantUiPullSettings(200, fsmOnDwinVp);
+      if (g_settingsUi) {
+        plantUiPullSettings(50, fsmOnDwinVp);
+        closeSettingsUi();
         dwinSetPage(PAGE_MAIN);
-        plantUiForceSpeedZero();
-        qn = FsmState::Idle;
-      } else if (g_q == FsmState::Error) {
+        plantUiForceRemainProgress();
+        plantUiPushSpeed();
+      }
+      if (g_q == FsmState::Error) {
         plantUiForceSpeedZero();
         qn = FsmState::Error;
       } else if (g_q == FsmState::Run || g_q == FsmState::Stopped) {
@@ -300,11 +297,12 @@ static void fsmDispatch(const FsmEventData& ev) {
       break;
 
     case FsmEvent::Reset:
-      if (g_q == FsmState::Settings) {
-        plantUiPullSettings(100, fsmOnDwinVp);
-        actClearPlant();
+      if (g_settingsUi) {
+        plantUiPullSettings(50, fsmOnDwinVp);
+        closeSettingsUi();
         dwinSetPage(PAGE_MAIN);
-      } else if (g_q == FsmState::Error) {
+      }
+      if (g_q == FsmState::Error) {
         actClearPlant();
         actDismissError();
       } else {
@@ -314,28 +312,23 @@ static void fsmDispatch(const FsmEventData& ev) {
       break;
 
     case FsmEvent::KbOpen:
-      if (g_q == FsmState::Error || g_q == FsmState::Settings) break;
+      if (g_q == FsmState::Error || g_settingsUi) break;
       actKbOpen();
       qn = FsmState::Keypad;
       break;
 
     case FsmEvent::SettingsOpen:
       if (g_q == FsmState::Error) break;
-      if (g_q == FsmState::Settings) {
-        qn = FsmState::Settings;
-        break;
-      }
-      if (g_q == FsmState::Run && !brakeLogicIsLatched()) {
-        plantUiForceSpeedZero();
-      }
+      if (g_settingsUi) break;
+      g_settingsUi = true;
       actSettingsOpen();
-      qn = FsmState::Settings;
+      qn = g_q;  // Run/Idle/Stopped не сбрасываем — счёт и тормоз продолжаются
       break;
 
     case FsmEvent::SettingsBack:
-      if (g_q != FsmState::Settings) break;  // ignore stale VP in Idle
+      if (!g_settingsUi) break;  // ignore stale VP
       actSettingsBack();
-      qn = FsmState::Idle;
+      qn = g_q;
       break;
 
     case FsmEvent::KbDigit:
@@ -364,15 +357,20 @@ static void fsmDispatch(const FsmEventData& ev) {
 
     case FsmEvent::TargetDone:
       if (g_q != FsmState::Run) break;
+      if (g_settingsUi) {
+        closeSettingsUi();
+        dwinSetPage(PAGE_MAIN);
+        delay(20);
+      }
       actTargetClamp();
       qn = FsmState::Stopped;
       g_jobComplete = true;  // счёт закрыт; дотормаживание путь не двигает
-      brakeLogicMuteFaults();
+      // Не глушить BrakeIneffective: как раз во время дотормаживания нужна стр.16.
+      // EncLoss и так закрыт (jobComplete / latch / не Run).
       // Нет зоны торможения → сразу тройной пик; иначе — когда вал встанет.
       if (!brakeLogicIsLatched()) {
         dwinBuzzStopTriple();
         encPathClear();
-        encPathClearReverse();
       }
       break;
 
@@ -526,7 +524,8 @@ void fsmOnDwinVp(uint16_t vp, uint32_t value) {
   }
 
   if (vp == VP_BRAKE || vp == (uint16_t)(VP_BRAKE + 1u) || vp == VP_BRAKE_ON_MS ||
-      vp == VP_BRAKE_OFF_MS || vp == VP_ENC_INVERT) {
+      vp == VP_BRAKE_OFF_MS) {
+    if (!g_settingsUi) return;  // правки только из экрана настроек
     plantUiOnSettingsVp(vp, value);
     return;
   }
@@ -591,7 +590,7 @@ void fsmPollButtons(uint32_t nowMs) {
 
   if (nowMs - tTarget >= TARGET_POLL_MS) {
     tTarget = nowMs;
-    if (g_q == FsmState::Settings) {
+    if (g_settingsUi) {
       plantUiRequestSettingsReads();
     } else if (g_q != FsmState::Keypad && g_q != FsmState::Error &&
                g_tgtGate == TargetGate::Normal) {
@@ -648,6 +647,11 @@ void fsmMotionTick(uint32_t nowMs) {
       if (g_speedEma > 200u && speedInst * 3u < g_speedEma) {
         speedInst = g_speedEma;
       }
+      // Потолок после EEPROM/инверсии: >30 м/с на Ø8см — мусор, не физика.
+      if (speedInst > 3000u) {
+        encPathClearWindow();
+        speedInst = g_speedEma;
+      }
 
       // Быстрый рост, более мягкий спад (дрель / краткий недочёт импульсов).
       if (speedInst >= g_speedEma) {
@@ -666,7 +670,7 @@ void fsmMotionTick(uint32_t nowMs) {
     if (g_err == FsmError::BrakeIneffective) {
       brakeLogicUpdateRelay(nowMs);
     } else {
-      // Реверс / нет энкодера — реле выкл.
+      // Нет энкодера — реле выкл.
       brakeLogicClearLatch();
       brakeRelayOff();
     }
@@ -676,16 +680,6 @@ void fsmMotionTick(uint32_t nowMs) {
   if ((g_q == FsmState::Idle || g_q == FsmState::Stopped) &&
       encPathActivity() && !brakeLogicIsLatched()) {
     tryArmRunFromMotion();
-  }
-
-  if (encPathTakeReverseHit() && g_q == FsmState::Run) {
-    FsmEventData ev{FsmEvent::ReverseDetect, 0};
-    fsmDispatch(ev);
-    if (g_q == FsmState::Error) {
-      brakeLogicClearLatch();
-      brakeRelayOff();
-      return;
-    }
   }
 
   // Импульсы для EncLoss / idle-zero — постоянно.
@@ -714,7 +708,7 @@ void fsmMotionTick(uint32_t nowMs) {
     if (!g_jobComplete &&
         (g_q == FsmState::Run || brakeLogicIsLatched())) {
       g_plant.travelM = encPathTravelCm();
-      if (g_q != FsmState::Keypad && g_q != FsmState::Settings) {
+      if (g_q != FsmState::Keypad) {
         plantUiPushTravel();
       }
 
@@ -759,7 +753,6 @@ void fsmBegin() {
   if (!settingsLoad(g_plant)) {
     settingsSave(g_plant);
   }
-  encPathSetInvert(g_plant.encInvert ? 1u : 0u);
   encPathClear();
   plantUiForceSpeedZero();
   plantUiWriteAllZeros();
@@ -767,12 +760,10 @@ void fsmBegin() {
   g_cacheProgress = g_cacheSpeed = 0;
   g_cacheBrake = 0xFFFFFFFFu;
   g_cacheBrakeOn = g_cacheBrakeOff = 0xFFFF;
-  g_cacheEncInvert = 0xFFFF;
   plantUiPushSettings();
   delay(40);
   g_cacheBrake = 0xFFFFFFFFu;
   g_cacheBrakeOn = g_cacheBrakeOff = 0xFFFF;
-  g_cacheEncInvert = 0xFFFF;
   plantUiPushSettings();
   dwinSetPage(PAGE_MAIN);
 }

@@ -13,8 +13,8 @@ uint8_t eeprom_buffered_read_byte(uint32_t pos);
 }
 #endif
 
-// Bump when blob layout changes.
-static constexpr uint32_t kMagic = 0xC7AB1704u;
+// Bump when blob layout changes (removed encInvert).
+static constexpr uint32_t kMagic = 0xC7AB1705u;
 static constexpr uint32_t kAddr = 0;
 
 struct SettingsBlob {
@@ -22,21 +22,18 @@ struct SettingsBlob {
   uint32_t brakeM;
   uint16_t brakeOnMs;
   uint16_t brakeOffMs;
-  uint16_t encInvert;  // 0/1
   uint32_t csum;
 };
 
 static uint32_t blobCsum(const SettingsBlob& b) {
   return b.magic ^ b.brakeM ^
-         ((uint32_t)b.brakeOnMs << 16) ^ (uint32_t)b.brakeOffMs ^
-         ((uint32_t)b.encInvert << 8) ^ 0xA5A5A5A5u;
+         ((uint32_t)b.brakeOnMs << 16) ^ (uint32_t)b.brakeOffMs ^ 0xA5A5A5A5u;
 }
 
 static void clampInto(PlantData& plant, const SettingsBlob& b) {
   plant.brakeM = (b.brakeM > MAX_METERS) ? MAX_METERS : b.brakeM;
   plant.brakeOnMs = (b.brakeOnMs > 9999u) ? 9999u : b.brakeOnMs;
   plant.brakeOffMs = (b.brakeOffMs > 9999u) ? 9999u : b.brakeOffMs;
-  plant.encInvert = (b.encInvert != 0) ? 1u : 0u;
 }
 
 static void readBlob(SettingsBlob& b) {
@@ -88,7 +85,6 @@ void settingsSave(const PlantData& plant) {
   b.brakeM = plant.brakeM;
   b.brakeOnMs = plant.brakeOnMs;
   b.brakeOffMs = plant.brakeOffMs;
-  b.encInvert = plant.encInvert ? 1u : 0u;
   b.csum = blobCsum(b);
 
   SettingsBlob cur{};

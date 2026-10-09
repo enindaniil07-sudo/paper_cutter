@@ -4,7 +4,7 @@ CLEAN_TABLO show patch — DGUS Save->Generate container is sacred.
 
 1) Insert Process Bar 0x5A23 VP6030 into page0 (shift later widgets, fix pointers)
 2) LONG32/UINT16 + white digits / Icon0=30 on ArtText
-3) If DGUS put ArtText on page17 — rewrite settings + invert IconShow
+3) If DGUS put ArtText on page17 — rewrite settings ArtText
 4) page16/18 stay EMPTY at FF-sentinel (never point empty→MAIN 0x4000)
 """
 from __future__ import annotations
@@ -76,31 +76,6 @@ def pack_process_bar() -> bytes:
     return bytes(rec)
 
 
-def pack_invert_icon(*, x: int, y: int) -> bytes:
-    """IconShow 0x5A00 — VP 6098 0/1 → icons 0/1 in 27.icl (sticky invert button)."""
-    rec = bytearray(32)
-    struct.pack_into(
-        ">HHHHHHHH",
-        rec,
-        0,
-        0x5A00,
-        0x51C0,
-        0x000A,
-        0x6098,
-        x & 0xFFFF,
-        y & 0xFFFF,
-        0,  # V_Min
-        1,  # V_Max
-    )
-    struct.pack_into(">HH", rec, 16, 0, 1)  # Icon_Min / Icon_Max
-    rec[20] = 27  # Icon_lib
-    rec[21] = 1  # Mode: opaque (cover idle button art)
-    rec[22] = 0
-    rec[23] = 255
-    rec[24] = 255
-    rec[25] = 0
-    return bytes(rec)
-
 
 def pack_arttext(
     sp: int,
@@ -112,6 +87,7 @@ def pack_arttext(
     var_type: int,
     icon0: int = 30,
     lib: int = 24,
+    n_dot: int = 0,
 ) -> bytes:
     rec = bytearray(32)
     struct.pack_into(">HHHHHH", rec, 0, 0x5A03, sp & 0xFFFF, 0x0009, vp & 0xFFFF, x & 0xFFFF, y & 0xFFFF)
@@ -119,7 +95,7 @@ def pack_arttext(
     rec[14] = lib & 0xFF
     rec[15] = 0
     rec[16] = n_int & 0xFF
-    rec[17] = 0
+    rec[17] = n_dot & 0xFF
     rec[18] = var_type & 0xFF
     rec[19] = 0x01
     rec[20] = 0
@@ -217,19 +193,18 @@ MAIN_ART_XY = {
 }
 
 
-def rewrite_settings_page17(s: bytearray, ptr: int, *, inv_x: int, inv_y: int) -> None:
+
+def rewrite_settings_page17(s: bytearray, ptr: int) -> None:
     blob = bytearray()
     for sp, vp, n_int, vtype, x, y in SETTINGS_ART:
         blob += pack_arttext(sp, vp, x, y, n_int=n_int, var_type=vtype, icon0=50, lib=25)
         print(f"  ArtText VP {vp:04X} @({x},{y}) N={n_int} type={vtype} lib=25 icon0=50")
-    blob += pack_invert_icon(x=inv_x, y=inv_y)
-    print(f"  IconShow VP 6098 @({inv_x},{inv_y}) lib=27 icons 0/1 (invert latch)")
     need = ptr + len(blob) + 32
     if len(s) < need:
         s.extend(b"\x00" * (need - len(s)))
     s[ptr : ptr + len(blob)] = blob
     s[ptr + len(blob) : ptr + len(blob) + 32] = b"\xff" * 32
-    put_entry(s, 17, 4, ptr)
+    put_entry(s, 17, 3, ptr)
 
 
 def patch_vartypes(s: bytearray) -> int:
@@ -312,13 +287,9 @@ def main() -> int:
     cnt17, ptr17 = get_entry(s, 17)
     print(f"After icon: page17 cnt={cnt17} ptr=0x{ptr17:04X}")
 
-    layout = json.loads((root / "design" / "layout.json").read_text(encoding="utf-8"))
-    inv = layout["controls"]["btn_enc_invert"]
-    inv_x, inv_y = int(inv["x"]), int(inv["y"])
-
     if has_settings and cnt17 > 0:
-        print("Settings ArtText page17 + invert IconShow:")
-        rewrite_settings_page17(s, ptr17, inv_x=inv_x, inv_y=inv_y)
+        print("Settings ArtText page17:")
+        rewrite_settings_page17(s, ptr17)
         cnt17, ptr17 = get_entry(s, 17)
 
     print("VarTypes / glyph / color:")
@@ -329,9 +300,9 @@ def main() -> int:
         cnt, ptr = get_entry(s, p)
         if cnt > 0:
             used_end = max(used_end, ptr + cnt * 32)
-    # Include cleared slot after settings widgets (3 ArtText + IconShow).
+    # Include cleared slot after settings widgets (3 ArtText).
     if has_settings:
-        used_end = max(used_end, ptr17 + 5 * 32)
+        used_end = max(used_end, ptr17 + 4 * 32)
     sentinel = used_end
     if sentinel % 32:
         sentinel += 32 - (sentinel % 32)
@@ -339,9 +310,9 @@ def main() -> int:
     del s[sentinel + 32 :]
 
     keep = {0, 10}
-    if has_settings and cnt17 == 4:
+    if has_settings and cnt17 == 3:
         keep.add(17)
-        print(f"Keeping page17 settings @0x{ptr17:04X} cnt=4")
+        print(f"Keeping page17 settings @0x{ptr17:04X} cnt=3")
     else:
         put_entry(s, 17, 0, sentinel)
         print("page17 empty (no DGUS ArtText in base)")
@@ -366,7 +337,7 @@ def main() -> int:
     if 17 in keep:
         c, p = get_entry(s, 17)
         vps = [struct.unpack_from(">H", s, p + i * 32 + 6)[0] for i in range(c)]
-        if c != 4 or set(vps) != {0x6090, 0x6094, 0x6096, 0x6098}:
+        if c != 3 or set(vps) != {0x6090, 0x6094, 0x6096}:
             raise SystemExit(f"page17 bad: cnt={c} vps={vps}")
 
     out.write_bytes(s)

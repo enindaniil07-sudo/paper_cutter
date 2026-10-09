@@ -59,15 +59,21 @@ def pack_var_input(
     v_max: int,
     kb_page: int,
     cursor: dict | None = None,
-    font: int = 24,
+    font: int = 32,
 ) -> bytes:
-    """Variable Data Input — touch on page; digits draw at cursor."""
+    """Variable Data Input — touch on page; digits draw at cursor.
+
+    0_DWIN_ASC.HZK sizes: 6,8,10,12,14,16,20,24,28,32 (no 40).
+    Font_Hor 40 falls back to a tiny bitmap with 40px pitch.
+    32 is the largest real cell (32×64); 24 clipped the right stroke.
+    (x,y) = upper-right of cursor; string grows left.
+    """
     xs, ys = int(touch["x"]), int(touch["y"])
     xe, ye = xs + int(touch["w"]), ys + int(touch["h"])
     cur = cursor if cursor is not None else disp
-    # Digits grow left from cursor (same as ЗАДАНО → kb_display on page 10).
-    cx = int(cur["x"]) + int(cur["w"]) - 36
-    cy = int(cur["y"]) + 18
+    font_h = font * 2
+    cx = int(cur["x"]) + int(cur["w"]) - 20
+    cy = int(cur["y"]) + max(0, (int(cur["h"]) - font_h) // 2)
 
     rec = bytearray(64)
     struct.pack_into(
@@ -195,7 +201,7 @@ def main() -> int:
     out += pack_var_input_zado(c["target_touch"], c["kb_display"])
 
     err_btn = {"x": 260, "y": 380, "w": 280, "h": 72}
-    for page in (11, 12, 13, 14, 15, 16):
+    for page in (12, 13, 14, 15, 16):
         out += pack_bit_button(page, err_btn, 0x6054, -1, -1)
 
     for key, code in KB_KEYS:
@@ -241,8 +247,6 @@ def main() -> int:
         kb_page=PAGE_EDIT,
         cursor=kb_cur,
     )
-    # Encoder invert — INV (latch bit0). Visual ON/OFF = IconShow VP6098 in 14Show (27.icl).
-    out += pack_bit_button(PAGE_SET, c["btn_enc_invert"], 0x6098, -1, -1, adj_mode=2)
 
     for key, code in SET_EDIT_KEYS:
         out += pack_ascii_key(PAGE_EDIT, c[key], code)

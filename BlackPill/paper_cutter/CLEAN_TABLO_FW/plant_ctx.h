@@ -12,6 +12,8 @@ extern bool g_speedShown;
 extern bool g_brakeLatched;
 /** Job finished: path/UI frozen until operator presses RESET. */
 extern bool g_jobComplete;
+/** Settings pages 17/18 overlay; job FSM state (Run/Idle/…) stays as-is. */
+extern bool g_settingsUi;
 
 enum class TargetGate : uint8_t { Normal = 0, Resetting, Armed };
 extern TargetGate g_tgtGate;
@@ -25,7 +27,6 @@ extern uint16_t g_cacheKb;
 extern uint32_t g_cacheBrake;
 extern uint16_t g_cacheBrakeOn;
 extern uint16_t g_cacheBrakeOff;
-extern uint16_t g_cacheEncInvert;
 
 uint32_t plantTargetCm();
 uint32_t plantRemainMeters();

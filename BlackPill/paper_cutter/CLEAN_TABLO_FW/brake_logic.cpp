@@ -59,7 +59,7 @@ bool brakeLogicShouldArm(uint32_t nowMs) {
     g_brakeLatched = true;
   }
 
-  // Отказ тормоза — держим ШИМ, пока вал крутится. Реверс — без тормоза.
+  // Отказ тормоза — держим ШИМ, пока вал крутится.
   if (g_q == FsmState::Error && g_err == FsmError::BrakeIneffective) {
     g_brakeLatched = true;
   }
@@ -101,7 +101,7 @@ static uint32_t brakeEffSpeedCms() {
 }
 
 static bool brakeEffZoneActive() {
-  if (g_faultsMuted) return false;
+  // g_faultsMuted — только EncLoss после стопа/сброса; зону тормоза не глушим.
   if (g_brakeLatched) return true;
   if (g_plant.brakeM == 0 || g_plant.targetM == 0) return false;
   if (g_q == FsmState::Run && plantRemainMeters() <= g_plant.brakeM) return true;
@@ -112,7 +112,8 @@ static bool brakeEffZoneActive() {
 }
 
 bool brakeEffPoll(uint32_t nowMs) {
-  if (!BRAKE_EFF_ENABLE || g_faultsMuted) {
+  // Mute после успешной остановки — не глушим зону торможения (см. TargetDone).
+  if (!BRAKE_EFF_ENABLE) {
     brakeEffReset();
     return false;
   }
@@ -133,7 +134,7 @@ bool brakeEffPoll(uint32_t nowMs) {
   if (!g_brakeEffArmed) {
     g_brakeEffArmed = true;
     g_brakeEffLastMs = nowMs;
-    g_brakeEffLastCms = v;
+    g_brakeEffLastCms = v;  // база на входе в зону / после перезахвата
     return false;
   }
 
@@ -143,10 +144,15 @@ bool brakeEffPoll(uint32_t nowMs) {
 
   g_brakeEffLastMs = nowMs;
 
-  if (v < g_brakeEffLastCms) {
-    g_brakeEffLastCms = v;
+  // Нужно явное замедление: любой шум EMA «−1» раньше вечно откладывал стр.16.
+  uint32_t needDrop = (uint32_t)BRAKE_EFF_MIN_DROP_CMS;
+  const uint32_t pct = g_brakeEffLastCms / 10u;  // ≥10% от базы
+  if (pct > needDrop) needDrop = pct;
+
+  if (v + needDrop <= g_brakeEffLastCms) {
+    g_brakeEffLastCms = v;  // тормоз работает — новая база, ещё период
     return false;
   }
 
-  return true;
+  return true;  // та же / выше / крошечный спад → отказ тормоза
 }

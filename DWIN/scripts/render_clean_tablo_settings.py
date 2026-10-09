@@ -36,7 +36,7 @@ def _sync(src: Path, dst: Path) -> None:
     os.replace(tmp, dst)
 
 
-def render_settings(w: int, h: int, layout: dict, *, invert_on: bool = False) -> Image.Image:
+def render_settings(w: int, h: int, layout: dict) -> Image.Image:
     c = layout["controls"]
     im = Image.new("RGB", (w, h), (16, 20, 28))
     dr = ImageDraw.Draw(im)
@@ -78,19 +78,6 @@ def render_settings(w: int, h: int, layout: dict, *, invert_on: bool = False) ->
             font=f_u,
         )
 
-    # Direction row + ИНВЕРСИЯ (off / on for Pic_On overlay page 19)
-    row = c["set_row_dir"]
-    inv = c["btn_enc_invert"]
-    dr.rounded_rectangle(_box(row), radius=14, fill=(28, 32, 42), outline=AMBER, width=2)
-    dr.text((row["x"] + 16, row["y"] + 18), "НАПРАВЛЕНИЕ", fill=(255, 220, 180), font=f_h)
-    dr.text((row["x"] + 16, row["y"] + 46), "ВРАЩЕНИЯ", fill=(255, 220, 180), font=f_h)
-    if invert_on:
-        fill, outline, ink = (61, 107, 79), (126, 201, 154), (232, 255, 240)
-    else:
-        fill, outline, ink = (20, 24, 32), (90, 101, 120), (160, 170, 185)
-    dr.rounded_rectangle(_box(inv), radius=12, fill=fill, outline=outline, width=2)
-    f_inv = font(18, True)
-    _center(dr, inv, "ИНВЕРСИЯ", f_inv, ink)
     return im
 
 
@@ -168,32 +155,12 @@ def main() -> int:
     # Do not overwrite with a blank — that clobbers the error BMP.
 
     # page17 = settings list (ArtText digits live here)
-    p17 = render_settings(w, h, layout, invert_on=False)
+    p17 = render_settings(w, h, layout)
     path17 = out / "17.bmp"
     p17.save(path17)
     _sync(path17, root / "DWIN_SET" / "17.bmp")
     _sync(path17, root / "17.bmp")
     p17.save(root / "source" / "page17_settings.png")
-
-    # page19 = green ON look (kept for reference / optional Pic_On)
-    p19 = render_settings(w, h, layout, invert_on=True)
-    path19 = out / "19.bmp"
-    p19.save(path19)
-    _sync(path19, root / "DWIN_SET" / "19.bmp")
-    _sync(path19, root / "19.bmp")
-    p19.save(root / "source" / "page19_invert_on.png")
-
-    # Variable Icon tiles (27.icl): sticky ON/OFF for VP 6098
-    inv = layout["controls"]["btn_enc_invert"]
-    ix, iy = int(inv["x"]), int(inv["y"])
-    iw, ih = int(inv["w"]), int(inv["h"])
-    icon_dir = out / "invert_btn"
-    icon_dir.mkdir(parents=True, exist_ok=True)
-    for name, src in (("00.bmp", p17), ("01.bmp", p19)):
-        tile = src.crop((ix, iy, ix + iw, iy + ih))
-        tip = icon_dir / name
-        tile.save(tip)
-        _sync(tip, root / "DWIN_SET" / "invert_btn" / name)
 
     # page18 = settings edit keypad
     p18 = render_edit(w, h, layout)
@@ -203,17 +170,7 @@ def main() -> int:
     _sync(path18, root / "18.bmp")
     p18.save(root / "source" / "page18_settings_edit.png")
 
-    print(
-        "Wrote",
-        path17,
-        "(settings),",
-        path19,
-        "(invert ON),",
-        path18,
-        "(edit),",
-        icon_dir,
-        "(icon tiles)",
-    )
+    print("Wrote", path17, "(settings),", path18, "(edit)")
     return 0
 
 

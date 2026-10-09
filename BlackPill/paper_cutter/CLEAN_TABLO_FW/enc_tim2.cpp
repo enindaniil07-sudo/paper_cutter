@@ -28,13 +28,13 @@ void encTim2Begin() {
   TIM2->ARR = 0xFFFFFFFFu;
 
   // No digital filter: any ICF>0 drops edges above ~tens of kHz
-  // (Ø8cm × 1000P/R ≈ 44 kHz @ 11 m/s) → false speed collapse on accel.
+  // (Ø8cm × 2500P/R ≈ 110 kHz @ 11 m/s) → false speed collapse on accel.
   TIM2->CCMR1 = TIM_CCMR1_CC1S_0 | TIM_CCMR1_CC2S_0;
   // Rising-active + enable captures (required for encoder SMS)
   TIM2->CCER = TIM_CCER_CC1E | TIM_CCER_CC2E;
 
   // Encoder mode 2: count on TI1 (A) edges, direction from TI2 (B)
-  // → 2 counts / A-period → 2000 counts / rev @ 1000 P/R
+  // → 2 counts / A-period → 5000 counts / rev @ 2500 P/R
   TIM2->SMCR = (TIM2->SMCR & ~TIM_SMCR_SMS) | TIM_SMCR_SMS_1;
 
   TIM2->CNT = 0;

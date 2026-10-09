@@ -25,5 +25,5 @@ void brakeLogicMuteFaults();
 void brakeLogicClearFaultMute();
 
 void brakeEffReset();
-/** true → speed did not fall over BRAKE_EFF_PERIOD_MS while in zone. */
+/** true → over BRAKE_EFF_PERIOD_MS speed did not drop enough while in zone. */
 bool brakeEffPoll(uint32_t nowMs);

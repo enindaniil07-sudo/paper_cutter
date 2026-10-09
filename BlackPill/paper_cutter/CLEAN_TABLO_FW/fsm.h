@@ -6,7 +6,6 @@ enum class FsmState : uint8_t { Idle = 0, Keypad, Run, Stopped, Error, Settings 
 
 enum class FsmError : uint8_t {
   None = 0,
-  Reverse,
   NoEncoder,
   BrakeIneffective,
 };
@@ -20,7 +19,6 @@ enum class FsmEvent : uint8_t {
   KbOk,
   KbCancel,
   TargetDone,
-  ReverseDetect,
   EncLoss,
   BrakeIneffectiveDetect,
   ErrAck,
@@ -43,7 +41,6 @@ struct PlantData {
   uint32_t brakeM;         // расстояние торможения, м
   uint16_t brakeOnMs;      // длительность ШИМ «1» (тормоз)
   uint16_t brakeOffMs;     // длительность ШИМ «0» (отпуск)
-  uint8_t encInvert;       // 0=норма, 1=инверсия направления энкодера
 };
 
 void fsmBegin();
