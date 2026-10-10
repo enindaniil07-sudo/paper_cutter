@@ -230,6 +230,20 @@ def main() -> int:
         r = _rect(c[key])
         im.paste(draw_soft_btn(r[2], r[3], label, acc, pressed=False), (r[0], r[1]))
 
+    if "error_badge" in c:
+        # Empty slot under the gear. IconShow 28.icl pops ! + ЭНКОДЕР/ТОРМОЗ here.
+        ex, ey, ew, eh = _rect(c["error_badge"])
+        overlay = Image.new("RGBA", im.size, (0, 0, 0, 0))
+        dr = ImageDraw.Draw(overlay)
+        dr.rounded_rectangle(
+            (ex, ey, ex + ew - 1, ey + eh - 1),
+            radius=16,
+            fill=(0, 0, 0, 230),
+            outline=(255, 255, 255, 16),
+            width=1,
+        )
+        im.paste(Image.alpha_composite(im.convert("RGBA"), overlay).convert("RGB"))
+
     if "btn_settings" in c:
         _settings_gear(im, c["btn_settings"])
 

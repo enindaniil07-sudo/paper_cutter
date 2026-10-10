@@ -1107,6 +1107,7 @@ internal static class Program
     private const ushort VpCtSpeedMs = 0x6020;
     private const ushort VpCtSpeedRpm = 0x6024;
     private const ushort VpCtProgress = 0x6030;
+    private const ushort VpCtError = 0x6040;
     private const ushort VpCtCmdStart = 0x6050;
     private const ushort VpCtCmdStop = 0x6051;
     private const ushort VpCtCmdReset = 0x6052;
@@ -1201,12 +1202,14 @@ internal static class Program
         // Progress fill (26.icl icons 70..170); keep on page 0 only via Pic_Id.
         if (lay.Controls != null && lay.Controls.ContainsKey("progress_bar"))
             AppendIconShowProgress(doc, screen, lay.Rect("progress_bar"), VpCtProgress, 0x5140, "Progress");
+        if (lay.Controls != null && lay.Controls.ContainsKey("error_badge"))
+            AppendIconShowErrorBadge(doc, screen, lay.Rect("error_badge"), VpCtError, 0x5150, "Error_badge");
 
         EnsureArtTextShowF13(doc);
         EnsureBitButtonF13(doc);
         EnsureVariableIconDisplayF13(doc);
         doc.SetDirtyFlag(true);
-        Console.WriteLine("CLEAN_TABLO: VP 6000/6010/6020/6030 + RESET/STOP/gear, background ICL=32");
+        Console.WriteLine("CLEAN_TABLO: VP 6000/6010/6020/6030/6040 + RESET/STOP/gear, background ICL=32");
         return true;
     }
 
@@ -1259,24 +1262,35 @@ internal static class Program
         {
             "# VP / SP — CLEAN_TABLO",
             "",
-            "Полный экран: ЗАДАНО / ОСТАЛОСЬ / м/с + СБРОС / СТОП. Тап **ЗАДАНО** → стр. **10**.",
+            "Полный экран: ЗАДАНО / ОСТАЛОСЬ / об/мин + СБРОС / СТОП. Тап **ЗАДАНО** → стр. **10**.",
             "Режим Run — автоматически при первых импульсах энкодера (вал запускают вручную).",
+            "Шестерёнка → стр. **17** (настройки). Тап строки → стр. **18** (клавиатура VarInput).",
+            "",
+            "Ошибки — **только бейдж** в окошке под шестерёнкой (IconShow VP **6040**, `28.icl`).",
+            "Полноэкранных страниц ошибок и кнопки OK нет. Бейдж снимает MCU сам:",
+            "ЭНК. — снова пошли импульсы энкодера; ТОРМ. — скорость в зоне тормоза пошла вниз; СТОП/СБРОС — любой.",
             "",
             "Фон страниц: **`32.icl`** (T5LCFG слот **0x20**).",
             "",
-            "**MCU:** `D:\\paper_cutter\\BlackPill\\paper_cutter\\CLEAN_TABLO_FW\\`",
+            "**MCU:** `D:\\lazer_rangefinder\\BlackPill\\paper_cutter\\CLEAN_TABLO_FW\\`",
             "",
             "**Resolution** " + width + "\u00d7" + height + ", **SPADDRESS** 0x" + spBase.ToString("X4", CultureInfo.InvariantCulture) + ".",
             "",
             "| Role | VP | Widget |",
             "|------|-----|--------|",
-            "| Задано | 6000 | ArtTextShow |",
-            "| Осталось | 6010 | ArtTextShow |",
-            "| Скорость м/с | 6020 | ArtTextShow ×0.01 |",
+            "| Задано | 6000 | ArtTextShow + VarInput→10 |",
+            "| Осталось | 6010 | ArtTextShow LONG signed (после переезда — минус) |",
+            "| Обороты об/мин | 6020 | ArtTextShow U16, N=4.0 |",
+            "| Прогресс | 6030 | Process Bar 0..100 |",
+            "| Ошибка (бейдж) | 6040 | IconShow **28.icl** 80–82: `0` скрыто, `1` ЭНК., `2` ТОРМ. |",
             "| СТОП / СБРОС | 6051 / 6052 | BitButton |",
-            "| Open keypad | 6053 | BitButton Pic_Next=10 |",
+            "| Шестерёнка | 6055 | BitButton Pic_Next=17 |",
+            "| НАЗАД (настр.) | 6056 | BitButton Pic_Next=0 |",
             "| KB buffer | 6080 | ArtTextShow |",
-            "| Keys / OK / Cancel | 60A1–60AD | BitButton |",
+            "| Keys / OK / Cancel | 60A1–60AD | (ASCII на стр. 10) |",
+            "| Расстояние торможения, м | 6090 | ArtText LONG на стр.17 + VarInput→18 |",
+            "| Время тормоз (1), мс | 6094 | ArtText + VarInput→18 |",
+            "| Время отпуск (0), мс | 6096 | ArtText + VarInput→18 |",
         };
         File.WriteAllText(path, string.Join("\r\n", lines) + "\r\n");
         Console.WriteLine("Wrote " + path);
@@ -1607,6 +1621,44 @@ internal static class Program
             Pic_Id = 0
         };
         ic.ICOFileName = "26.icl";
+        var rHost = new DrawRectangle(rect.X, rect.Y, rect.Width, rect.Height, false)
+        {
+            Rectangle = rect,
+            ScreenSize = screen,
+            f13Type = F13VariableIconDisplay,
+            ConfigObject = ic
+        };
+        ic.SetPosition(rect);
+        AppendDrawObject(doc, rHost);
+    }
+
+    private static void AppendIconShowErrorBadge(
+        Document doc,
+        Point screen,
+        Rectangle rect,
+        ushort vp,
+        ushort spDesc,
+        string name)
+    {
+        string vpHex = vp.ToString("X4", CultureInfo.InvariantCulture);
+        string spHex = spDesc.ToString("X4", CultureInfo.InvariantCulture);
+        var ic = new IconShow
+        {
+            Var_Name = name,
+            VarStrPoint = vpHex,
+            VarDescAddress = spHex,
+            V_Min = 0,
+            V_Max = 2,
+            Icon_Min = 80,
+            Icon_Max = 82,
+            Icon_lib = 28,
+            Mode = 1,
+            BackMode = 0,
+            ICONLight = 100,
+            BackLight = 100,
+            Pic_Id = 0
+        };
+        ic.ICOFileName = "28.icl";
         var rHost = new DrawRectangle(rect.X, rect.Y, rect.Width, rect.Height, false)
         {
             Rectangle = rect,

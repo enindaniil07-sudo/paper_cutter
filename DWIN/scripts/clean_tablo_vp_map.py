@@ -6,6 +6,8 @@
 VP_TARGET = 0x6000
 VP_TRAVEL = 0x6010
 VP_SPEED = 0x6020
+# IconShow 28.icl: 0 скрыто, 1 ЭНКОДЕР, 2 ТОРМОЗ
+VP_ERROR = 0x6040
 
 # Page-0 BitButtons
 VP_STOP = 0x6051
@@ -42,4 +44,5 @@ VP_SPEED_LIMIT_ON = 0x609B
 SP_TARGET = 0x5100
 SP_TRAVEL = 0x5110
 SP_SPEED = 0x5120
+SP_ERROR = 0x5150
 SP_KB = 0x5180

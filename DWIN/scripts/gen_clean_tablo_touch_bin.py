@@ -3,6 +3,7 @@
 CLEAN_TABLO 13TouchFile.bin
 
 Page 0: RESET/STOP + gear→17 + Variable Data Input VP 6000 (keyboard page 10)
+        (ошибки — бейдж IconShow VP 6040 на стр. 0, без OK / страниц ошибок)
 Page 10: ASCII keys for VarInput (ЗАДАНО)
 Page 17: settings list — 4× VarInput (keyboard page 18) + НАЗАД→0 + OFF/ON
 Page 18: ASCII keys for settings VarInput
@@ -200,9 +201,7 @@ def main() -> int:
     out += settings
     out += pack_var_input_zado(c["target_touch"], c["kb_display"])
 
-    err_btn = {"x": 260, "y": 380, "w": 280, "h": 72}
-    for page in (12, 13, 14, 15, 16):
-        out += pack_bit_button(page, err_btn, 0x6054, -1, -1)
+    # Ошибки — только бейдж IconShow VP 6040 на стр. 0; страниц ошибок / OK нет.
 
     for key, code in KB_KEYS:
         out += pack_ascii_key(PAGE_KB, c[key], code)

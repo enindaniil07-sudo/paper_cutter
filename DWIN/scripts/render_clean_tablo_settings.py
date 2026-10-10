@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""CLEAN_TABLO page 16 (settings list) + page 17 (edit keypad)."""
+"""CLEAN_TABLO page 17 (settings list) + page 18 (edit keypad)."""
 from __future__ import annotations
 
 import argparse
@@ -151,8 +151,7 @@ def main() -> int:
     out.mkdir(parents=True, exist_ok=True)
     (root / "source").mkdir(parents=True, exist_ok=True)
 
-    # page16 = error «тормоз не действует» (render_clean_tablo_error.py).
-    # Do not overwrite with a blank — that clobbers the error BMP.
+    # page16 — пустая (без фона); ошибки — бейдж VP 6040 на стр. 0.
 
     # page17 = settings list (ArtText digits live here)
     p17 = render_settings(w, h, layout)

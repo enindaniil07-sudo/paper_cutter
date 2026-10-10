@@ -24,6 +24,12 @@ ART_VAR_UINT16 = 5
 PROGRESS_XS, PROGRESS_YS = 16, 194
 PROGRESS_XE, PROGRESS_YE = 783, 215  # x+w-1, y+h-1
 
+VP_ERROR = 0x6040
+SP_ERROR = 0x5150
+ERROR_ICON_MIN = 80
+ERROR_ICON_MAX = 82
+ERROR_LIB = 28
+
 
 def rgb565(r: int, g: int, b: int) -> int:
     return ((r * 31 // 255) << 11) | ((g * 63 // 255) << 5) | (b * 31 // 255)
@@ -75,6 +81,31 @@ def pack_process_bar() -> bytes:
     struct.pack_into(">H", rec, 30, 0xFFFF)  # VP_RT unused
     return bytes(rec)
 
+
+def pack_error_badge(x: int, y: int) -> bytes:
+    """IconShow 0x5A00 — VP 6040, 28.icl icons 80..82 (скрыто / энкодер / тормоз)."""
+    rec = bytearray(32)
+    struct.pack_into(
+        ">HHHHHHHH",
+        rec,
+        0,
+        0x5A00,
+        SP_ERROR,
+        0x000A,
+        VP_ERROR,
+        x & 0xFFFF,
+        y & 0xFFFF,
+        0,
+        2,
+    )
+    struct.pack_into(">HH", rec, 16, ERROR_ICON_MIN, ERROR_ICON_MAX)
+    rec[20] = ERROR_LIB
+    rec[21] = 1  # opaque — same as progress; transparency glitched on panel
+    rec[22] = 0
+    rec[23] = 255
+    rec[24] = 255
+    rec[25] = 0
+    return bytes(rec)
 
 
 def pack_arttext(
@@ -141,6 +172,30 @@ def ensure_progress_bar(s: bytearray) -> None:
     _shift_ptrs(s, insert_at, 32)
     put_entry(s, 0, 4, PAYLOAD)
     print(f"  inserted Process Bar at 0x{insert_at:04X}; shifted ptrs >= insert")
+
+
+def ensure_error_badge(s: bytearray, x: int, y: int) -> None:
+    """Ensure page0 has error IconShow VP6040 (popup ! + ЭНКОДЕР/ТОРМОЗ)."""
+    cnt0, ptr0 = get_entry(s, 0)
+    if ptr0 != PAYLOAD:
+        raise SystemExit(f"unexpected page0 ptr 0x{ptr0:04X}")
+
+    icon = pack_error_badge(x, y)
+    for i in range(cnt0):
+        off = ptr0 + i * 32
+        code = struct.unpack_from(">H", s, off)[0]
+        vp = struct.unpack_from(">H", s, off + 6)[0]
+        if vp != VP_ERROR:
+            continue
+        s[off : off + 32] = icon
+        print(f"  page0 IconShow VP6040 refreshed @0x{off:04X} xy=({x},{y})")
+        return
+
+    insert_at = ptr0 + cnt0 * 32
+    s[insert_at:insert_at] = icon
+    _shift_ptrs(s, insert_at, 32)
+    put_entry(s, 0, cnt0 + 1, PAYLOAD)
+    print(f"  inserted error IconShow at 0x{insert_at:04X} xy=({x},{y}); page0 cnt={cnt0 + 1}")
 
 
 def patch_arttext_widget(
@@ -283,6 +338,15 @@ def main() -> int:
 
     print("Progress Process Bar:")
     ensure_progress_bar(s)
+
+    layout_path = root / "design" / "layout.json"
+    err = {"x": 714, "y": 80}
+    if layout_path.is_file():
+        err = (json.loads(layout_path.read_text(encoding="utf-8")).get("controls") or {}).get(
+            "error_badge"
+        ) or err
+    print("Error badge IconShow:")
+    ensure_error_badge(s, int(err["x"]), int(err["y"]))
 
     cnt17, ptr17 = get_entry(s, 17)
     print(f"After icon: page17 cnt={cnt17} ptr=0x{ptr17:04X}")

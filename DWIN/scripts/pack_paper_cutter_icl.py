@@ -19,7 +19,7 @@ def _load_images_to_icl():
     return mod
 
 
-def _pack_folder(out: Path, paths: list[Path], icl_id: int, quality: int) -> int:
+def _pack_folder(out: Path, paths: list[Path], icl_id: int, quality: int, *, chroma: str = "411") -> int:
     mod = _load_images_to_icl()
     try:
         _, slot_id, n, mx = mod.run_pack(
@@ -29,7 +29,7 @@ def _pack_folder(out: Path, paths: list[Path], icl_id: int, quality: int) -> int
             quality=quality,
             align_head_kb=32,
             lib_size_kb=256,
-            chroma="411",
+            chroma=chroma,
             keep_jpeg_raw=False,
         )
     except Exception as e:
@@ -42,23 +42,25 @@ def _pack_folder(out: Path, paths: list[Path], icl_id: int, quality: int) -> int
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--project", type=Path, default=Path(__file__).resolve().parents[1] / "PAPER_CUTTER")
-    ap.add_argument("--which", choices=("large", "small", "progress", "all"), default="all")
+    ap.add_argument("--which", choices=("large", "small", "progress", "error", "all"), default="all")
     ap.add_argument("--quality", type=int, default=88)
     args = ap.parse_args()
     root = args.project.resolve()
     dset = root / "DWIN_SET"
     dset.mkdir(parents=True, exist_ok=True)
 
-    specs: list[tuple[str, Path, list[int], int]] = []
+    specs: list[tuple[str, Path, list[int], int, str]] = []
     if args.which in ("large", "all"):
-        specs.append(("large", root / "image" / "digits_large", list(range(30, 42)), 24))
+        specs.append(("large", root / "image" / "digits_large", list(range(30, 42)), 24, "411"))
     if args.which in ("small", "all"):
-        specs.append(("small", root / "image" / "digits_small", list(range(50, 62)), 25))
+        specs.append(("small", root / "image" / "digits_small", list(range(50, 62)), 25, "411"))
     if args.which in ("progress", "all"):
         n_prog = 101  # icons 70..170 = 0..100 %
-        specs.append(("progress", root / "image" / "progress", list(range(70, 70 + n_prog)), 26))
+        specs.append(("progress", root / "image" / "progress", list(range(70, 70 + n_prog)), 26, "411"))
+    if args.which in ("error", "all"):
+        specs.append(("error", root / "image" / "error_badge", [80, 81, 82], 28, "444"))
 
-    for name, folder, ids, icl_id in specs:
+    for name, folder, ids, icl_id, chroma in specs:
         if not folder.is_dir():
             print("ERROR: run gen script first, missing", folder, file=sys.stderr)
             return 1
@@ -67,7 +69,7 @@ def main() -> int:
             if not p.is_file():
                 print("ERROR: missing", p, file=sys.stderr)
                 return 1
-        rc = _pack_folder(dset / f"{icl_id}.icl", paths, icl_id, args.quality)
+        rc = _pack_folder(dset / f"{icl_id}.icl", paths, icl_id, args.quality, chroma=chroma)
         if rc != 0:
             return rc
     return 0
