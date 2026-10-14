@@ -10,7 +10,7 @@
 
 Фон страниц: **`32.icl`** (T5LCFG слот **0x20**).
 
-**MCU:** `D:\lazer_rangefinder\BlackPill\paper_cutter\CLEAN_TABLO_FW\`
+**MCU:** `D:\paper_cutter\lazer_rangefinder\BlackPill\paper_cutter\CLEAN_TABLO_FW\`
 
 **Resolution** 800×480, **SPADDRESS** 0x5000.
 
@@ -18,7 +18,8 @@
 |------|-----|--------|
 | Задано | 6000 | ArtTextShow + VarInput→10 |
 | Осталось | 6010 | ArtTextShow LONG signed (после переезда — минус) |
-| Обороты об/мин | 6020 | ArtTextShow U16, N=4.0 |
+| Обороты об/мин | 6020 | ArtTextShow U16, N=4.0, левая половина табло |
+| Рулон, мм (дальномер, живое) | 6024 | ArtTextShow U16, N=4.0, правая половина; `0` пока замера нет |
 | Прогресс | 6030 | Process Bar 0..100 |
 | Ошибка (бейдж) | 6040 | IconShow **28.icl** 80–82: `0` скрыто, `1` ЭНК., `2` ТОРМ. |
 | СТОП / СБРОС | 6051 / 6052 | BitButton |
@@ -29,3 +30,7 @@
 | Расстояние торможения, м | 6090 | ArtText LONG на стр.17 + VarInput→18 |
 | Время тормоз (1), мс | 6094 | ArtText + VarInput→18 |
 | Время отпуск (0), мс | 6096 | ArtText + VarInput→18 |
+| Пустой рулон, мм (дальномер) | 6098 | ArtText U16 + VarInput→18; `0` = выкл. |
+
+**Дальномер:** ESP32-S3-Zero (GL-R01) → ESP-NOW → ESP32-C3 → USART1 Black Pill (C3 GPIO21 → PA10, 115200).
+В Run, когда расстояние ≥ «Пустой рулон», MCU включает реле тормоза тем же ШИМ (6094/6096), что и зона «торм. м».

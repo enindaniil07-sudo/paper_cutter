@@ -6,6 +6,8 @@
 VP_TARGET = 0x6000
 VP_TRAVEL = 0x6010
 VP_SPEED = 0x6020
+# Живое расстояние дальномера, мм (не путать с порогом VP_ROLL_MM)
+VP_RANGE = 0x6024
 # IconShow 28.icl: 0 скрыто, 1 ЭНКОДЕР, 2 ТОРМОЗ
 VP_ERROR = 0x6040
 
@@ -32,13 +34,12 @@ VP_KB_DEL = 0x60AB
 VP_KB_OK = 0x60AC
 VP_KB_CANCEL = 0x60AD
 
-# Settings (page 16 VarInput → keyboard page 17). VP_BRAKE is LONG (4 B).
+# Settings (page 17 VarInput → keyboard page 18). VP_BRAKE is LONG (4 B).
 VP_BRAKE = 0x6090
 VP_BRAKE_ON_MS = 0x6094
 VP_BRAKE_OFF_MS = 0x6096
-VP_SPEED_LIMIT = 0x6098
-VP_SPEED_LIMIT_OFF = 0x609A
-VP_SPEED_LIMIT_ON = 0x609B
+# «ПУСТОЙ РУЛОН», мм (U16): дальномер ≥ порога → тормоз. 0 = выкл.
+VP_ROLL_MM = 0x6098
 
 # SP description
 SP_TARGET = 0x5100

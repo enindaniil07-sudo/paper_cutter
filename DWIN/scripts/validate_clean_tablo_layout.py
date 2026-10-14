@@ -23,6 +23,8 @@ REQUIRED = (
     "set_val_on",
     "set_row_off",
     "set_val_off",
+    "set_row_roll",
+    "set_val_roll",
     "set_edit_display",
     "set_edit_0",
     "set_edit_ok",

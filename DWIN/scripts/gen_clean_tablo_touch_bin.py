@@ -5,7 +5,8 @@ CLEAN_TABLO 13TouchFile.bin
 Page 0: RESET/STOP + gear→17 + Variable Data Input VP 6000 (keyboard page 10)
         (ошибки — бейдж IconShow VP 6040 на стр. 0, без OK / страниц ошибок)
 Page 10: ASCII keys for VarInput (ЗАДАНО)
-Page 17: settings list — 4× VarInput (keyboard page 18) + НАЗАД→0 + OFF/ON
+Page 17: settings list — 4× VarInput (keyboard page 18) + НАЗАД→0
+         6090 торм. м (LONG) / 6094 ШИМ 1 мс / 6096 ШИМ 0 мс / 6098 пустой рулон мм
 Page 18: ASCII keys for settings VarInput
 """
 from __future__ import annotations
@@ -239,6 +240,19 @@ def main() -> int:
         c["set_val_off"],
         c["set_val_off"],
         0x6096,
+        v_type=0,
+        n_int=4,
+        v_min=0,
+        v_max=9999,
+        kb_page=PAGE_EDIT,
+        cursor=kb_cur,
+    )
+    # «ПУСТОЙ РУЛОН», мм — дальномер (C3 → USART1), U16 0..9999
+    out += pack_var_input(
+        PAGE_SET,
+        c["set_val_roll"],
+        c["set_val_roll"],
+        0x6098,
         v_type=0,
         n_int=4,
         v_min=0,

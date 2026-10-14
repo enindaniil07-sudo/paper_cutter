@@ -1,0 +1,4 @@
+## Arduino Nano — validated PLL ÷3 solution
+For frequency division / phase tracking in `ArduinoNano_Pin7_to_Pin5`, the user confirmed the PLL approach works well: use `ArduinoNano_PLL_freq_div3/ArduinoNano_PLL_freq_div3.ino` with `pll.h` — EWMA on input period, phase error `pe` vs last D9 rising edge wrapped to ±T_out/2, PI correction on `locked_half_us`; D9 is software-only so phase feedback is consistent.
+
+Optional: workspace root `ArduinoNano_PLL_ICP_freq_div3/` — same PLL + Timer1 ICP on D4 (ISR queue → loop calls `pll.onRefRise`); software D9; poll fallback if ICP gets no edges.

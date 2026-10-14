@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"path": "E:/BlackPill"
+		},
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"powershell.cwd": "BlackPill"
+	}
+}

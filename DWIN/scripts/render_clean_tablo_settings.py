@@ -62,6 +62,7 @@ def render_settings(w: int, h: int, layout: dict) -> Image.Image:
         ("set_row_brake", "set_val_brake", "РАССТОЯНИЕ ТОРМОЖЕНИЯ", "м"),
         ("set_row_on", "set_val_on", "ВРЕМЯ ТОРМОЗ (1)", "мс"),
         ("set_row_off", "set_val_off", "ВРЕМЯ ОТПУСК (0)", "мс"),
+        ("set_row_roll", "set_val_roll", "ПУСТОЙ РУЛОН", "мм"),
     ]
     f_h = font(18, True)
     f_u = font(15, True)

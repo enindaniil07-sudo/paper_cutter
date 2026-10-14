@@ -20,7 +20,6 @@ from clean_tablo_ui import (  # noqa: E402
     AQUA,
     MUTE,
     RESET,
-    SLATE,
     START,
     STOP,
     draw_soft_btn,
@@ -199,14 +198,8 @@ def main() -> int:
 
     if "speed_ms_rim" in decor:
         _glass_card(im, _rect(decor["speed_ms_rim"]), "ОБОРОТЫ", "об/мин", AQUA, well=True)
-    elif "speed_ms_rim" in decor and "speed_rpm_rim" in decor:
-        _glass_card(im, _rect(decor["speed_ms_rim"]), "ОБОРОТЫ", "об/мин", AQUA, well=True)
-        _glass_card(im, _rect(decor["speed_rpm_rim"]), "ОБОРОТЫ", "об/мин", SLATE, well=True)
-    elif "speed_strip" in decor:
-        sr = _rect(decor["speed_strip"])
-        mid = sr[2] // 2 - 8
-        _glass_card(im, (sr[0], sr[1], mid, sr[3]), "ОБОРОТЫ", "об/мин", AQUA, well=True)
-        _glass_card(im, (sr[0] + mid + 16, sr[1], mid, sr[3]), "ОБОРОТЫ", "об/мин", SLATE, well=True)
+    if "range_rim" in decor:
+        _glass_card(im, _rect(decor["range_rim"]), "РУЛОН", "мм", AMBER, well=True)
 
     # Трек под Process Bar 0x5A23 (VP 6030) — панель рисует заливку поверх.
     if "progress_bar" in c:

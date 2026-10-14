@@ -238,15 +238,44 @@ SETTINGS_ART = (
     (0x5190, 0x6090, 5, ART_VAR_LONG32, 732, 90),
     (0x51A0, 0x6094, 4, ART_VAR_UINT16, 732, 188),
     (0x51B0, 0x6096, 4, ART_VAR_UINT16, 732, 286),
+    (0x51C0, 0x6098, 4, ART_VAR_UINT16, 732, 384),  # ПУСТОЙ РУЛОН, мм
 )
+SETTINGS_VPS = frozenset(vp for _, vp, _, _, _, _ in SETTINGS_ART)
+SETTINGS_CNT = len(SETTINGS_ART)
 
-# RPM: N=4.0 right @760 — целые об/мин, без ведущих нулей (isShow0 off).
+# Крупные цифры 24.icl 56×112, выравнивание вправо: X — правый край колодца.
+# Обороты и рулон делят бывшее табло пополам (карточки 378 px).
 MAIN_ART_XY = {
     0x6000: (368, 56),
     0x6010: (692, 56),
-    0x6020: (760, 252),
+    0x6020: (369, 252),  # ОБОРОТЫ, левая половина
+    0x6024: (759, 252),  # РУЛОН, мм, правая половина
 }
 
+
+
+def ensure_range_arttext(s: bytearray) -> None:
+    """Page 0: ArtText VP 6024 — живое расстояние дальномера, мм."""
+    cnt0, ptr0 = get_entry(s, 0)
+    if ptr0 != PAYLOAD:
+        raise SystemExit(f"unexpected page0 ptr 0x{ptr0:04X}")
+
+    x, y = MAIN_ART_XY[0x6024]
+    rec = pack_arttext(0x5130, 0x6024, x, y, n_int=4, var_type=ART_VAR_UINT16, icon0=30, lib=24)
+    for i in range(cnt0):
+        off = ptr0 + i * 32
+        code = struct.unpack_from(">H", s, off)[0]
+        vp = struct.unpack_from(">H", s, off + 6)[0]
+        if code == 0x5A03 and vp == 0x6024:
+            s[off : off + 32] = rec
+            print(f"  page0 ArtText VP6024 refreshed @0x{off:04X} xy=({x},{y})")
+            return
+
+    insert_at = ptr0 + cnt0 * 32
+    s[insert_at:insert_at] = rec
+    _shift_ptrs(s, insert_at, 32)
+    put_entry(s, 0, cnt0 + 1, PAYLOAD)
+    print(f"  inserted range ArtText at 0x{insert_at:04X} xy=({x},{y}); page0 cnt={cnt0 + 1}")
 
 
 def rewrite_settings_page17(s: bytearray, ptr: int) -> None:
@@ -259,7 +288,7 @@ def rewrite_settings_page17(s: bytearray, ptr: int) -> None:
         s.extend(b"\x00" * (need - len(s)))
     s[ptr : ptr + len(blob)] = blob
     s[ptr + len(blob) : ptr + len(blob) + 32] = b"\xff" * 32
-    put_entry(s, 17, 3, ptr)
+    put_entry(s, 17, SETTINGS_CNT, ptr)
 
 
 def patch_vartypes(s: bytearray) -> int:
@@ -270,10 +299,12 @@ def patch_vartypes(s: bytearray) -> int:
         0x6000: (5, 0, ART_VAR_LONG32, 0x5100, 30, 24, 0x01, 0),
         0x6010: (5, 0, ART_VAR_LONG32, 0x5110, 30, 24, 0x01, 0),
         0x6020: (4, 0, ART_VAR_UINT16, 0x5120, 30, 24, 0x01, 0),
+        0x6024: (4, 0, ART_VAR_UINT16, 0x5130, 30, 24, 0x01, 0),
         0x6080: (5, 0, ART_VAR_UINT16, 0x5180, 30, 24, 0x01, 0),
         0x6090: (5, 0, ART_VAR_LONG32, 0x5190, 50, 25, 0x01, 0),
         0x6094: (4, 0, ART_VAR_UINT16, 0x51A0, 50, 25, 0x01, 0),
         0x6096: (4, 0, ART_VAR_UINT16, 0x51B0, 50, 25, 0x01, 0),
+        0x6098: (4, 0, ART_VAR_UINT16, 0x51C0, 50, 25, 0x01, 0),
     }
     for off in range(PAYLOAD, len(s) - 31, 32):
         if s[off] != 0x5A or s[off + 1] != 0x03:
@@ -348,6 +379,9 @@ def main() -> int:
     print("Error badge IconShow:")
     ensure_error_badge(s, int(err["x"]), int(err["y"]))
 
+    print("Range ArtText:")
+    ensure_range_arttext(s)
+
     cnt17, ptr17 = get_entry(s, 17)
     print(f"After icon: page17 cnt={cnt17} ptr=0x{ptr17:04X}")
 
@@ -364,9 +398,9 @@ def main() -> int:
         cnt, ptr = get_entry(s, p)
         if cnt > 0:
             used_end = max(used_end, ptr + cnt * 32)
-    # Include cleared slot after settings widgets (3 ArtText).
+    # Include cleared slot after settings widgets (SETTINGS_CNT ArtText).
     if has_settings:
-        used_end = max(used_end, ptr17 + 4 * 32)
+        used_end = max(used_end, ptr17 + (SETTINGS_CNT + 1) * 32)
     sentinel = used_end
     if sentinel % 32:
         sentinel += 32 - (sentinel % 32)
@@ -374,9 +408,9 @@ def main() -> int:
     del s[sentinel + 32 :]
 
     keep = {0, 10}
-    if has_settings and cnt17 == 3:
+    if has_settings and cnt17 == SETTINGS_CNT:
         keep.add(17)
-        print(f"Keeping page17 settings @0x{ptr17:04X} cnt=3")
+        print(f"Keeping page17 settings @0x{ptr17:04X} cnt={SETTINGS_CNT}")
     else:
         put_entry(s, 17, 0, sentinel)
         print("page17 empty (no DGUS ArtText in base)")
@@ -401,7 +435,7 @@ def main() -> int:
     if 17 in keep:
         c, p = get_entry(s, 17)
         vps = [struct.unpack_from(">H", s, p + i * 32 + 6)[0] for i in range(c)]
-        if c != 3 or set(vps) != {0x6090, 0x6094, 0x6096}:
+        if c != SETTINGS_CNT or set(vps) != SETTINGS_VPS:
             raise SystemExit(f"page17 bad: cnt={c} vps={vps}")
 
     out.write_bytes(s)
