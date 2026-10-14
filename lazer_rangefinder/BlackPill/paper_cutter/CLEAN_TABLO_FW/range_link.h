@@ -15,5 +15,3 @@ void rangeLinkPoll(uint32_t nowMs);
 bool rangeLinkValid(uint32_t nowMs);
 /** Последнее расстояние, мм (RANGE_NO_READING если нет данных). */
 uint16_t rangeLinkMm();
-/** true, если по USART1 вообще приходили строки (линия к C3 жива). */
-bool rangeLinkSeenAny();

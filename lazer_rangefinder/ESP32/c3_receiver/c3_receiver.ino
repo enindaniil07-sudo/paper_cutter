@@ -81,15 +81,22 @@ class SenderPeer : public ESP_NOW_Peer {
 
 SenderPeer s3Peer(kS3Mac);
 
+// Кадры принимаем только от известного S3 (kS3Mac → s3Peer.onReceive).
+// Чужой передатчик на канале не должен управлять тормозом: его только
+// отмечаем в логе, пир под него не создаём (иначе утечка и подмена данных).
 void registerUnknown(const esp_now_recv_info_t *info, const uint8_t *data, int len, void *arg) {
+  (void)data;
+  (void)len;
   (void)arg;
-  if (memcmp(info->des_addr, ESP_NOW.BROADCAST_ADDR, 6) != 0) return;
-  SenderPeer *peer = new SenderPeer(info->src_addr);
-  if (!peer->begin()) {
-    delete peer;
-    return;
-  }
-  accept(reinterpret_cast<const uint8_t *>(data), (size_t)len);
+  static uint32_t lastNoteMs = 0;
+  uint32_t now = millis();
+  if (now - lastNoteMs < 5000) return;
+  lastNoteMs = now;
+  char mac[18];
+  snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X", info->src_addr[0], info->src_addr[1],
+           info->src_addr[2], info->src_addr[3], info->src_addr[4], info->src_addr[5]);
+  Serial.print(F("чужой передатчик, игнорирую: "));
+  Serial.println(mac);
 }
 
 void writeToController(uint16_t mm) {

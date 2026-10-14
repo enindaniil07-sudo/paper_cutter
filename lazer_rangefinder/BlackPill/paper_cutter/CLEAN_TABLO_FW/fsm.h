@@ -2,7 +2,8 @@
 
 #include <Arduino.h>
 
-enum class FsmState : uint8_t { Idle = 0, Keypad, Run, Stopped, Settings };
+// Экран настроек — не состояние, а оверлей (g_settingsUi): Run/Stopped идут дальше.
+enum class FsmState : uint8_t { Idle = 0, Keypad, Run, Stopped };
 
 /** Неблокирующий флаг: бейдж в окошке (VP_ERROR), FSM-состояние не меняется. */
 enum class FsmError : uint8_t {

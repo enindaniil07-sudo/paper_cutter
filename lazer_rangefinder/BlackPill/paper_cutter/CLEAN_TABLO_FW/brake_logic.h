@@ -6,13 +6,9 @@
 
 void brakeLogicClearLatch();
 bool brakeLogicIsLatched();
-/** Force PWM latch (e.g. СТОП) until shaft fully stops. */
-void brakeLogicArmLatch();
 
 /** Update latch from zone/error; return whether PWM should run. */
 bool brakeLogicShouldArm(uint32_t nowMs);
-/** true — дальномер ≥ «ПУСТОЙ РУЛОН» (данные свежие, настройка > 0). */
-bool brakeLogicRangeZone(uint32_t nowMs);
 void brakeLogicUpdateRelay(uint32_t nowMs);
 
 /**

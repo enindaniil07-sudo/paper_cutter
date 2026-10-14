@@ -170,7 +170,8 @@ foreach ($i in $pageIds) {
 }
 python -c "from pathlib import Path; p=Path(r'$cfgOut'); b=bytearray(p.read_bytes()); b[8]=0x20; p.write_bytes(b); print('final T5LCFG[8]=', hex(b[8]))"
 
-$fwDir = "D:\paper_cutter\BlackPill\paper_cutter\CLEAN_TABLO_FW"
+# Прошивка Black Pill живёт в соседнем проекте; путь относительно корня репозитория.
+$fwDir = Join-Path (Split-Path $Repo -Parent) "lazer_rangefinder\BlackPill\paper_cutter\CLEAN_TABLO_FW"
 if (Test-Path $fwDir) {
     Copy-Item (Join-Path $Root "VP_MEMORY_MAP.md") (Join-Path $fwDir "VP_MEMORY_MAP.md") -Force
 }
@@ -180,7 +181,8 @@ Write-Host 'OK: CLEAN_TABLO; BMPs kept; 14Show LONG32 VP6000/6010 — sync F:\ a
 # Mirror HMI assets to SD if present (panel often reads F:\DWIN_SET)
 if (Test-Path 'F:\') {
     New-Item -ItemType Directory -Path 'F:\DWIN_SET' -Force | Out-Null
-    foreach ($f in @('13TouchFile.bin', '14ShowFile.bin', '24.icl', '25.icl', '28.icl')) {
+    # 32.icl — фоновые страницы (00/01/02/10/17/18); без него правки экранов на панель не попадут.
+    foreach ($f in @('13TouchFile.bin', '14ShowFile.bin', '24.icl', '25.icl', '28.icl', '32.icl', 'T5LCFG.CFG')) {
         $src = Join-Path $dstSet $f
         if (Test-Path $src) {
             Copy-Item $src "F:\$f" -Force

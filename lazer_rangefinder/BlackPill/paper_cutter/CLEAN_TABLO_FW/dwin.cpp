@@ -33,7 +33,7 @@ static void dwinSend(const uint8_t* payload, uint8_t payloadLen) {
   const uint16_t crc = dwinCrc16(payload, payloadLen);
   uint8_t frame[32];
   const uint8_t len = (uint8_t)(payloadLen + 2u);  // includes CRC
-  if ((uint16_t)3 + len > sizeof(frame)) return;
+  if ((size_t)3 + len > sizeof(frame)) return;
   frame[0] = 0x5A;
   frame[1] = 0xA5;
   frame[2] = len;
@@ -135,14 +135,16 @@ void dwinPoll(DwinVpHandler onVp) {
     if (s_rxLen < need) continue;
 
     // 0x83 reply: 5A A5 len 83 VP words data… [CRC_L CRC_H]
+    // Границы проверяем по длине этого кадра (need), а не по числу принятых
+    // байт: в буфере уже может лежать начало следующего кадра.
     if (s_rx[3] == 0x83 && len >= 5 && onVp) {
       const uint16_t vp = ((uint16_t)s_rx[4] << 8) | s_rx[5];
       const uint8_t words = s_rx[6];
-      if (words >= 1 && s_rxLen >= 9) {
+      if (words >= 1 && need >= 9) {
         const uint16_t w0 = ((uint16_t)s_rx[7] << 8) | s_rx[8];
         uint32_t val = w0;
         // Long (VP+VP+1): ЗАДАНО / тормоз. Prefer 2-word merge when present.
-        if (words >= 2 && s_rxLen >= 11 && (vp == VP_TARGET || vp == VP_BRAKE)) {
+        if (words >= 2 && need >= 11 && (vp == VP_TARGET || vp == VP_BRAKE)) {
           const uint16_t w1 = ((uint16_t)s_rx[9] << 8) | s_rx[10];
           val = ((uint32_t)w0 << 16) | w1;
         }

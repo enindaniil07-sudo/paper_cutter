@@ -91,15 +91,13 @@ def render_edit(w: int, h: int, layout: dict) -> Image.Image:
     dr.rounded_rectangle(_box(disp), radius=14, fill=(0, 0, 0), outline=AMBER, width=2)
     f_hint = font(16, True)
     hint = "ВВОД ЗНАЧЕНИЯ"
-    hw = dr.textlength(hint, font=f_hint) if hasattr(dr, "textlength") else 160
     dr.text(
         (disp["x"] + 20, disp["y"] + 12),
         hint,
         fill=(160, 170, 185),
         font=f_hint,
     )
-    # keep right side free for VarInput digits
-    _ = hw
+    # Правая часть окна остаётся пустой — туда панель рисует цифры VarInput.
 
     keys = [
         ("1", "set_edit_1", "num"),

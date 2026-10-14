@@ -16,12 +16,6 @@ void brakeLogicClearLatch() {
 
 bool brakeLogicIsLatched() { return g_brakeLatched; }
 
-void brakeLogicArmLatch() {
-  g_brakeLatched = true;
-  // If already stopped, don't treat as a completed braking cycle.
-  g_brakeSawMotion = !(g_speedEma == 0 && g_plant.speedCms == 0);
-}
-
 bool brakeLogicTakeStopComplete() {
   const bool v = g_stopCompletePending;
   g_stopCompletePending = false;
@@ -72,8 +66,6 @@ static bool brakeZoneByRange(uint32_t nowMs) {
   if (!rangeLinkValid(nowMs)) return false;
   return rangeLinkMm() >= g_plant.rollMm;
 }
-
-bool brakeLogicRangeZone(uint32_t nowMs) { return brakeZoneByRange(nowMs); }
 
 /** Любая зона торможения — только в Run, не после СТОП/докрутки. */
 static bool brakeZoneReached(uint32_t nowMs) {

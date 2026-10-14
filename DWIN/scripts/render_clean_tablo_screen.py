@@ -7,8 +7,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import os
-import shutil
 import sys
 from pathlib import Path
 
@@ -20,7 +18,6 @@ from clean_tablo_ui import (  # noqa: E402
     AQUA,
     MUTE,
     RESET,
-    START,
     STOP,
     draw_soft_btn,
 )
@@ -34,13 +31,6 @@ except ImportError as e:
 
 def _rect(d: dict) -> tuple[int, int, int, int]:
     return int(d["x"]), int(d["y"]), int(d["w"]), int(d["h"])
-
-
-def _sync_bmp(src: Path, dst: Path) -> None:
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dst.with_suffix(dst.suffix + ".__new__")
-    shutil.copyfile(src, tmp)
-    os.replace(tmp, dst)
 
 
 def _bg(w: int, h: int) -> Image.Image:
@@ -213,8 +203,8 @@ def main() -> int:
             width=1,
         )
 
+    # Кнопки СТАРТ нет: счёт идёт от ввода ЗАДАНО; на экране только СБРОС / СТОП.
     for key, label, acc in (
-        ("btn_start", "СТАРТ", START),
         ("btn_reset", "СБРОС", RESET),
         ("btn_stop", "СТОП", STOP),
     ):

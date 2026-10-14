@@ -20,9 +20,8 @@ PAYLOAD = 0x4000
 ART_VAR_LONG32 = 1
 ART_VAR_UINT16 = 5
 
-# progress_bar in layout.json
-PROGRESS_XS, PROGRESS_YS = 16, 194
-PROGRESS_XE, PROGRESS_YE = 783, 215  # x+w-1, y+h-1
+# progress_bar: по умолчанию как в design/layout.json; main() перечитывает оттуда.
+PROGRESS_RECT = (16, 194, 768, 22)  # x, y, w, h
 
 VP_ERROR = 0x6040
 SP_ERROR = 0x5150
@@ -48,8 +47,9 @@ def get_entry(s: bytes, page: int) -> tuple[int, int]:
     return s[o] | (s[o + 1] << 8), (s[o + 2] << 8) | s[o + 3]
 
 
-def pack_process_bar() -> bytes:
+def pack_process_bar(rect: tuple[int, int, int, int] = PROGRESS_RECT) -> bytes:
     """Process Bar 0x5A23 — VP 6030 0..100, solid fill (no JPEG IconShow glitches)."""
+    x, y, w, h = rect
     rec = bytearray(32)
     struct.pack_into(
         ">HHHHHHHH",
@@ -59,10 +59,10 @@ def pack_process_bar() -> bytes:
         0x5140,
         0x000D,
         0x6030,
-        PROGRESS_XS,
-        PROGRESS_YS,
-        PROGRESS_XE,
-        PROGRESS_YE,
+        x,
+        y,
+        x + w - 1,
+        y + h - 1,
     )
     struct.pack_into(
         ">HHH",
@@ -142,13 +142,13 @@ def _shift_ptrs(s: bytearray, at_or_after: int, delta: int) -> None:
             put_entry(s, p, cnt, ptr + delta)
 
 
-def ensure_progress_bar(s: bytearray) -> None:
+def ensure_progress_bar(s: bytearray, rect: tuple[int, int, int, int] = PROGRESS_RECT) -> None:
     """Ensure page0 has Process Bar VP6030 (replace legacy IconShow if present)."""
     cnt0, ptr0 = get_entry(s, 0)
     if ptr0 != PAYLOAD:
         raise SystemExit(f"unexpected page0 ptr 0x{ptr0:04X}")
 
-    bar = pack_process_bar()
+    bar = pack_process_bar(rect)
     for i in range(cnt0):
         off = ptr0 + i * 32
         code = struct.unpack_from(">H", s, off)[0]
@@ -367,15 +367,19 @@ def main() -> int:
     has_settings = cnt17 > 0
     print(f"Base: {pristine} ({len(s)} bytes, max={s[9]}, page17 cnt={cnt17} ptr=0x{ptr17:04X})")
 
-    print("Progress Process Bar:")
-    ensure_progress_bar(s)
-
     layout_path = root / "design" / "layout.json"
-    err = {"x": 714, "y": 80}
+    controls: dict = {}
     if layout_path.is_file():
-        err = (json.loads(layout_path.read_text(encoding="utf-8")).get("controls") or {}).get(
-            "error_badge"
-        ) or err
+        controls = json.loads(layout_path.read_text(encoding="utf-8")).get("controls") or {}
+    err = controls.get("error_badge") or {"x": 714, "y": 80}
+    prog = PROGRESS_RECT
+    pb = controls.get("progress_bar")
+    if pb:
+        prog = (int(pb["x"]), int(pb["y"]), int(pb["w"]), int(pb["h"]))
+
+    print("Progress Process Bar:")
+    ensure_progress_bar(s, prog)
+
     print("Error badge IconShow:")
     ensure_error_badge(s, int(err["x"]), int(err["y"]))
 

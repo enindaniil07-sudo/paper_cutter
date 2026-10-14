@@ -23,5 +23,3 @@ void plantUiPullSettings(uint32_t waitMs, DwinVpHandler onVp);
 /** VP принадлежит экрану настроек (6090/6091/6094/6096/6098). */
 bool plantUiIsSettingsVp(uint16_t vp);
 void plantUiOnSettingsVp(uint16_t vp, uint32_t value);
-
-uint16_t plantUiProgressPct();

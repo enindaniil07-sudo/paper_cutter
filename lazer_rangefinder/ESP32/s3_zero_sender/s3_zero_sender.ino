@@ -27,6 +27,9 @@ static constexpr int kSensorRx = 44;  // площадка RX
 static constexpr int kSensorTx = 43;  // площадка TX
 static constexpr int kRgbPin = 21;
 static constexpr uint16_t kNoReading = 0xFFFF;
+// Датчик молчит дольше этого — шлём FFFF, чтобы C3/Black Pill отличали
+// «радио живо, датчик отвалился» от «S3 выключен».
+static constexpr uint32_t kSensorSilenceMs = 500;
 
 static const uint8_t kSetCycle30[] = {0x01, 0x06, 0x02, 0x03, 0x00, 0x1E, 0xF8, 0x7A};
 
@@ -35,11 +38,10 @@ HardwareSerial Sensor(1);
 uint8_t frame[4];
 uint8_t frameN = 0;
 uint32_t lastByteMs = 0;
+uint32_t lastFrameMs = 0;
 uint16_t lastMm = kNoReading;
 bool frameFresh = false;
 uint16_t seq = 0;
-uint32_t sentOk = 0;
-uint32_t sentFail = 0;
 
 struct __attribute__((packed)) RangePacket {
   uint8_t magic;
@@ -84,13 +86,7 @@ void sendReading() {
   packet.sum = packetSum(packet);
 
   bool ok = broadcastPeer.sendPacket(reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
-  if (ok) {
-    sentOk++;
-    paint(0, 12, 0);
-  } else {
-    sentFail++;
-    paint(12, 0, 0);
-  }
+  paint(ok ? 0 : 12, ok ? 12 : 0, 0);
 
   Serial.print(ok ? F("ушло ") : F("нет подтверждения "));
   Serial.print(packet.seq);
@@ -107,6 +103,7 @@ void takeFrame() {
   uint8_t sum = (uint8_t)(frame[0] + frame[1] + frame[2]);
   if (sum == frame[3]) {
     lastMm = ((uint16_t)frame[1] << 8) | frame[2];
+    lastFrameMs = millis();
     frameFresh = true;
   }
   frameN = 0;
@@ -159,6 +156,14 @@ void loop() {
   // Каждый кадр датчика (цикл 30 мс) уходит сразу, без паузы 100 мс.
   if (frameFresh) {
     frameFresh = false;
+    sendReading();
+    return;
+  }
+  // Датчик замолчал — раз в kSensorSilenceMs шлём «нет замера».
+  uint32_t now = millis();
+  if (now - lastFrameMs >= kSensorSilenceMs) {
+    lastFrameMs = now;
+    lastMm = kNoReading;
     sendReading();
   }
 }

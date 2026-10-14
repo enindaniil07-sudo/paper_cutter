@@ -107,7 +107,7 @@ void plantUiOnSettingsVp(uint16_t vp, uint32_t value) {
   }
 }
 
-uint16_t plantUiProgressPct() {
+static uint16_t plantUiProgressPct() {
   const uint32_t t = plantTargetCm();
   if (t == 0) return 0;
   uint64_t p = ((uint64_t)g_plant.travelM * 100ULL) / t;
